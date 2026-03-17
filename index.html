@@ -356,7 +356,128 @@ function LineChart({data,color,color2,label,label2,formatVal,height=130}){
 
 // ── Excel helpers ──────────────────────────────────────────────────────────────
 function xlDateToISO(v){if(!v)return"";if(typeof v==="string"&&v.match(/^\d{4}-\d{2}/))return v.slice(0,10);if(typeof v==="string"&&v.includes("/")){try{const p=v.split("/");return`${p[2].length===4?p[2]:"20"+p[2]}-${p[0].padStart(2,"0")}-${p[1].padStart(2,"0")}`}catch{return""}}if(typeof v==="number"){return new Date(Math.round((v-25569)*86400000)).toISOString().slice(0,10)}return String(v).slice(0,10)}
-function doExport(orders,projects){const wb=XLSX.utils.book_new();const o2r=o=>{const proj=projects.find(p=>p.id===o.projectId);const sup=o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0);return{"מספר פק\"ע":o.woNumber,"תיאור":o.description||"","פרויקט":proj?proj.name:"","כמות":Number(o.qty||0),"מחיר ליחידה":Number(o.unitPrice||0),"סופק":sup,"יתרה":Number(o.qty||0)-sup,"הכנסות":sup*Number(o.unitPrice||0),"תאריך קבלה":o.receivedDate||"","יעד אספקה":o.targetDate||"","סטטוס":SL[o.status]||"","חוסרים פתוחים":(o.shortages||[]).filter(s=>!s.received).length}};XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(orders.map(o2r)),"פקודות עבודה");const dels=orders.flatMap(o=>o.deliveries.map(d=>({"מספר פק\"ע":o.woNumber,"תאריך":d.date||"","כמות":Number(d.qty||0),"הכנסה":Number(d.qty||0)*Number(o.unitPrice||0),"הערה":d.note||""})));XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(dels.length?dels:[{}]),"אספקות");const shs=orders.flatMap(o=>(o.shortages||[]).map(s=>({"מספר פק\"ע":o.woNumber,"פריט":s.item,"כמות חסרה":s.missing||"","הוזמן":s.orderedDate||"","התקבל":s.receivedDate||"","סטטוס":s.received?"התקבל":"ממתין","הערה":s.note||""})));XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(shs.length?shs:[{}]),"חוסרים");const mon={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=mkKey(d.date);if(!k)return;if(!mon[k])mon[k]={k,qty:0,rev:0};mon[k].qty+=Number(d.qty||0);mon[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));const qtr={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=qKey(d.date);if(!k)return;if(!qtr[k])qtr[k]={k,qty:0,rev:0};qtr[k].qty+=Number(d.qty||0);qtr[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.values(mon).sort((a,b)=>a.k.localeCompare(b.k)).map(m=>({"חודש":m.k,"כמות":m.qty,"הכנסות":m.rev}))),"חודשי");XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.values(qtr).sort((a,b)=>a.k.localeCompare(b.k)).map(q=>({"רבעון":q.k,"כמות":q.qty,"הכנסות":q.rev}))),"רבעוני");XLSX.writeFile(wb,"דוח_ייצור_"+todays()+".xlsx")}
+function doExport(orders,projects){
+  const wb=XLSX.utils.book_new();
+  const today=todays();
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+  const hdrStyle={
+    font:{bold:true,color:{rgb:"FFFFFF"},name:"Arial",sz:11},
+    fill:{fgColor:{rgb:"1E293B"}},
+    alignment:{horizontal:"center",vertical:"center",wrapText:true,readingOrder:2},
+    border:{top:{style:"thin",color:{rgb:"374151"}},bottom:{style:"thin",color:{rgb:"374151"}},left:{style:"thin",color:{rgb:"374151"}},right:{style:"thin",color:{rgb:"374151"}}}
+  };
+  const rowStyleEven={
+    font:{name:"Arial",sz:10,color:{rgb:"1E293B"}},
+    fill:{fgColor:{rgb:"F0F4F8"}},
+    alignment:{vertical:"center",readingOrder:2},
+    border:{top:{style:"thin",color:{rgb:"E2E8F0"}},bottom:{style:"thin",color:{rgb:"E2E8F0"}},left:{style:"thin",color:{rgb:"E2E8F0"}},right:{style:"thin",color:{rgb:"E2E8F0"}}}
+  };
+  const rowStyleOdd={...rowStyleEven,fill:{fgColor:{rgb:"FFFFFF"}}};
+  const numStyle={...rowStyleEven,alignment:{horizontal:"center",vertical:"center",readingOrder:2}};
+  const numStyleOdd={...numStyle,fill:{fgColor:{rgb:"FFFFFF"}}};
+  const greenStyle={font:{name:"Arial",sz:10,bold:true,color:{rgb:"065F46"}},fill:{fgColor:{rgb:"D1FAE5"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border:{top:{style:"thin",color:{rgb:"E2E8F0"}},bottom:{style:"thin",color:{rgb:"E2E8F0"}},left:{style:"thin",color:{rgb:"E2E8F0"}},right:{style:"thin",color:{rgb:"E2E8F0"}}}};
+  const redStyle={...greenStyle,font:{name:"Arial",sz:10,bold:true,color:{rgb:"991B1B"}},fill:{fgColor:{rgb:"FEE2E2"}}};
+  const amberStyle={...greenStyle,font:{name:"Arial",sz:10,bold:true,color:{rgb:"92400E"}},fill:{fgColor:{rgb:"FEF3C7"}}};
+
+  const statusStyle=s=>s==="complete"?greenStyle:s==="blocked"?redStyle:amberStyle;
+
+  const applyHdrs=(ws,headers,row=0)=>{
+    headers.forEach((h,c)=>{
+      const addr=XLSX.utils.encode_cell({r:row,c});
+      if(!ws[addr])ws[addr]={v:h,t:"s"};
+      ws[addr].s=hdrStyle;
+    });
+  };
+  const applyRow=(ws,rowIdx,colCount,isEven,specialCols={})=>{
+    const base=isEven?rowStyleEven:rowStyleOdd;
+    const baseNum=isEven?numStyle:numStyleOdd;
+    for(let c=0;c<colCount;c++){
+      const addr=XLSX.utils.encode_cell({r:rowIdx,c});
+      if(!ws[addr])continue;
+      if(specialCols[c]){ws[addr].s=specialCols[c];}
+      else{ws[addr].s=typeof ws[addr].v==="number"?baseNum:base;}
+    }
+  };
+  const setColWidths=(ws,widths)=>{ws["!cols"]=widths.map(w=>({wch:w}))};
+  const setRTL=(ws)=>{if(!ws["!opts"])ws["!opts"]={};ws["!opts"].rightToLeft=true};
+  const freezeRow=(ws,row=1)=>{ws["!freeze"]={xSplit:0,ySplit:row,topLeftCell:XLSX.utils.encode_cell({r:row,c:0}),activePane:"bottomLeft",state:"frozen"}};
+
+  // ── Sheet 1: פקודות עבודה ────────────────────────────────────────────────
+  const hdrs1=['מספר פק"ע','תיאור','פרויקט','כמות מוזמנת','מחיר ליחידה','כמות שסופקה','יתרה','הכנסות ממומשות','תאריך קבלה','יעד אספקה','סטטוס','חוסרים פתוחים','תקלות'];
+  const rows1=orders.map(o=>{
+    const proj=projects.find(p=>p.id===o.projectId);
+    const sup=o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0);
+    return[o.woNumber,o.description||"",proj?proj.name:"",Number(o.qty||0),Number(o.unitPrice||0),sup,Number(o.qty||0)-sup,sup*Number(o.unitPrice||0),o.receivedDate||"",o.targetDate||"",SL[o.status]||"",(o.shortages||[]).filter(s=>!s.received).length,(o.defects||[]).length];
+  });
+  const ws1=XLSX.utils.aoa_to_sheet([hdrs1,...rows1]);
+  applyHdrs(ws1,hdrs1);
+  rows1.forEach((_,i)=>applyRow(ws1,i+1,hdrs1.length,i%2===0,{10:statusStyle(orders[i].status),11:orders[i].shortages?.filter(s=>!s.received).length>0?redStyle:rowStyleEven,12:orders[i].defects?.length>0?amberStyle:rowStyleEven}));
+  setColWidths(ws1,[16,34,16,14,14,14,10,18,13,13,10,12,8]);
+  setRTL(ws1);freezeRow(ws1);
+  if(!ws1["!rows"])ws1["!rows"]=[];ws1["!rows"][0]={hpx:24};
+  XLSX.utils.book_append_sheet(wb,ws1,"פקודות עבודה");
+
+  // ── Sheet 2: אספקות ──────────────────────────────────────────────────────
+  const hdrs2=['מספר פק"ע','תיאור','פרויקט','תאריך אספקה','כמות','הכנסה','הערה'];
+  const dels=orders.flatMap(o=>{const proj=projects.find(p=>p.id===o.projectId);return o.deliveries.map(d=>[o.woNumber,o.description||"",proj?proj.name:"",d.date||"",Number(d.qty||0),Number(d.qty||0)*Number(o.unitPrice||0),d.note||""]);});
+  const ws2=XLSX.utils.aoa_to_sheet(dels.length?[hdrs2,...dels]:[hdrs2,["אין נתונים","","","","","",""]]);
+  applyHdrs(ws2,hdrs2);
+  dels.forEach((_,i)=>applyRow(ws2,i+1,hdrs2.length,i%2===0));
+  setColWidths(ws2,[16,30,14,13,10,16,30]);
+  setRTL(ws2);freezeRow(ws2);
+  if(!ws2["!rows"])ws2["!rows"]=[];ws2["!rows"][0]={hpx:24};
+  XLSX.utils.book_append_sheet(wb,ws2,"אספקות");
+
+  // ── Sheet 3: חוסרים ──────────────────────────────────────────────────────
+  const hdrs3=['מספר פק"ע','פריט','מק"ט','כמות חסרה','סיבה','אחראי','תאריך הזמנה','סטטוס','הערה'];
+  const shs=orders.flatMap(o=>(o.shortages||[]).map(s=>[o.woNumber,s.item||"",s.sku||"",Number(s.missing||0),s.reason||"",s.responsible||"",s.orderedDate||"",s.received?"התקבל":"ממתין",s.note||""]));
+  const ws3=XLSX.utils.aoa_to_sheet(shs.length?[hdrs3,...shs]:[hdrs3,["אין נתונים","","","","","","","",""]]);
+  applyHdrs(ws3,hdrs3);
+  shs.forEach((r,i)=>applyRow(ws3,i+1,hdrs3.length,i%2===0,{7:r[7]==="התקבל"?greenStyle:redStyle}));
+  setColWidths(ws3,[16,24,14,12,22,14,14,10,28]);
+  setRTL(ws3);freezeRow(ws3);
+  if(!ws3["!rows"])ws3["!rows"]=[];ws3["!rows"][0]={hpx:24};
+  XLSX.utils.book_append_sheet(wb,ws3,"חוסרים");
+
+  // ── Sheet 4: תקלות ────────────────────────────────────────────────────────
+  const hdrs4=['מספר פק"ע','תיאור פק"ע','פרויקט','כותרת תקלה','סוג','חומרה','אחראי','תאריך גילוי','סטטוס','תיאור'];
+  const sevLbl={critical:"קריטית",high:"גבוהה",medium:"בינונית",low:"נמוכה"};
+  const typLbl={quality:"איכות",process:"תהליך",material:"חומר גלם",equipment:"ציוד",human:"גורם אנושי",other:"אחר"};
+  const defs=orders.flatMap(o=>{const proj=projects.find(p=>p.id===o.projectId);return(o.defects||[]).map(d=>[o.woNumber,o.description||"",proj?proj.name:"",d.title||"",typLbl[d.type]||d.type||"",sevLbl[d.severity]||d.severity||"",d.responsible||"",d.discoveredDate||"",d.status==="closed"?"סגורה":"פתוחה",d.description||""]);});
+  const sevStyleMap=r=>{const s=r[5];return s==="קריטית"?redStyle:s==="גבוהה"?amberStyle:s==="בינונית"?{...amberStyle,fill:{fgColor:{rgb:"FEF9C3"}},font:{...amberStyle.font,color:{rgb:"713F12"}}}:greenStyle};
+  const ws4=XLSX.utils.aoa_to_sheet(defs.length?[hdrs4,...defs]:[hdrs4,["אין נתונים","","","","","","","","",""]]);
+  applyHdrs(ws4,hdrs4);
+  defs.forEach((r,i)=>applyRow(ws4,i+1,hdrs4.length,i%2===0,{5:sevStyleMap(r),8:r[8]==="סגורה"?greenStyle:redStyle}));
+  setColWidths(ws4,[16,26,14,26,12,10,14,14,10,34]);
+  setRTL(ws4);freezeRow(ws4);
+  if(!ws4["!rows"])ws4["!rows"]=[];ws4["!rows"][0]={hpx:24};
+  XLSX.utils.book_append_sheet(wb,ws4,"תקלות");
+
+  // ── Sheet 5: הכנסות חודשיות ───────────────────────────────────────────────
+  const hdrs5m=["חודש","כמות שסופקה","הכנסות (₪)"];
+  const mon={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=mkKey(d.date);if(!k)return;if(!mon[k])mon[k]={qty:0,rev:0};mon[k].qty+=Number(d.qty||0);mon[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0);}));
+  const monRows=Object.keys(mon).sort().map(k=>[k,mon[k].qty,mon[k].rev]);
+  const ws5=XLSX.utils.aoa_to_sheet(monRows.length?[hdrs5m,...monRows]:[hdrs5m,["אין נתונים",0,0]]);
+  applyHdrs(ws5,hdrs5m);
+  monRows.forEach((_,i)=>applyRow(ws5,i+1,3,i%2===0));
+  setColWidths(ws5,[14,16,18]);setRTL(ws5);freezeRow(ws5);
+  if(!ws5["!rows"])ws5["!rows"]=[];ws5["!rows"][0]={hpx:24};
+  XLSX.utils.book_append_sheet(wb,ws5,"הכנסות חודשיות");
+
+  // ── Sheet 6: הכנסות רבעוניות ──────────────────────────────────────────────
+  const hdrs5q=["רבעון","כמות שסופקה","הכנסות (₪)"];
+  const qtr={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=qKey(d.date);if(!k)return;if(!qtr[k])qtr[k]={qty:0,rev:0};qtr[k].qty+=Number(d.qty||0);qtr[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0);}));
+  const qtrRows=Object.keys(qtr).sort().map(k=>[k,qtr[k].qty,qtr[k].rev]);
+  const ws6=XLSX.utils.aoa_to_sheet(qtrRows.length?[hdrs5q,...qtrRows]:[hdrs5q,["אין נתונים",0,0]]);
+  applyHdrs(ws6,hdrs5q);
+  qtrRows.forEach((_,i)=>applyRow(ws6,i+1,3,i%2===0));
+  setColWidths(ws6,[14,16,18]);setRTL(ws6);freezeRow(ws6);
+  if(!ws6["!rows"])ws6["!rows"]=[];ws6["!rows"][0]={hpx:24};
+  XLSX.utils.book_append_sheet(wb,ws6,"הכנסות רבעוניות");
+
+  XLSX.writeFile(wb,"דוח_ייצור_"+today+".xlsx");
+}
 function doImport(file,projects,cb){
   const fr=new FileReader();
   fr.onload=e=>{try{
@@ -645,7 +766,6 @@ function AdminPanel({projects,onClose,lightMode,orders,setOrders,setProjects,per
 }
 
 // ── Navbar ─────────────────────────────────────────────────────────────────────
-const TABS=[{id:"dashboard",label:"📊 דאשבורד"},{id:"orders",label:'📋 פק"ע'},{id:"shortages",label:"⚠️ חוסרים"},{id:"defects",label:"🔧 תקלות"},{id:"projects",label:"🏗️ פרויקטים"},{id:"excel",label:"📂 Excel"}];
 function Navbar({tab,setTab,lightMode,toggleLight,sync,onAdmin,onCustomize,onLogout}){
   const {currentUser}=useAuth();
   const [menuOpen,setMenuOpen]=useState(false);
@@ -708,6 +828,7 @@ function Navbar({tab,setTab,lightMode,toggleLight,sync,onAdmin,onCustomize,onLog
 }
 
 // ── Dashboard ──────────────────────────────────────────────────────────────────
+const TABS=[{id:"dashboard",label:"📊 דאשבורד"},{id:"orders",label:'📋 פק"ע'},{id:"shortages",label:"⚠️ חוסרים"},{id:"defects",label:"🔧 תקלות"},{id:"yield",label:"📉 Yield"},{id:"projects",label:"🏗️ פרויקטים"},{id:"excel",label:"📂 Excel"}];
 function Dashboard({orders,projects}){
   const [period,setPeriod]=useState("month");
   const [selYear,setSelYear]=useState("all");
@@ -847,6 +968,279 @@ function Dashboard({orders,projects}){
           {overdue.length>0&&<Card style={{border:"1px solid #ef444433"}}><div style={{fontWeight:700,marginBottom:8,fontSize:13,color:"#ef4444"}}>🚨 עברו יעד אספקה</div><div style={{display:"flex",flexDirection:"column",gap:5}}>{overdue.map(o=><div key={o.id} style={{background:"var(--c-deep)",borderRadius:7,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><span style={{fontWeight:700,color:"#f97316",fontSize:13}}>{o.woNumber}</span><span style={{color:"#94a3b8",marginRight:8,fontSize:12}}>{o.description}</span></div><span style={{fontSize:12,color:"#ef4444",background:"#450a0a",padding:"2px 8px",borderRadius:10,whiteSpace:"nowrap"}}>+{o.dl} ימים</span></div>)}</div></Card>}
           {blocked.length>0&&<Card style={{border:"1px solid #f9731633"}}><div style={{fontWeight:700,marginBottom:8,fontSize:13,color:"#f97316"}}>🚧 תקועות בחוסרים</div><div style={{display:"flex",flexDirection:"column",gap:5}}>{blocked.slice(0,5).map(o=>{const c=(o.shortages||[]).filter(s=>!s.received).length;return<div key={o.id} style={{background:"var(--c-deep)",borderRadius:7,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><span style={{fontWeight:700,color:"#f97316",fontSize:13}}>{o.woNumber}</span><span style={{color:"#94a3b8",marginRight:8,fontSize:12}}>{o.description}</span></div><span style={{fontSize:12,color:"#ef4444"}}>{c} חוסר{c>1?"ים":""}</span></div>})}</div></Card>}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Yield Dashboard ────────────────────────────────────────────────────────────
+function YieldDashboard({orders,projects}){
+  const [filterProj,setFilterProj]=useState("all");
+  const [filterWO,setFilterWO]=useState("all");
+  const [period,setPeriod]=useState("month");
+
+  // All orders with defects data
+  const base=useMemo(()=>orders.filter(o=>
+    (filterProj==="all"||o.projectId===filterProj)&&
+    (filterWO==="all"||o.id===filterWO)
+  ),[orders,filterProj,filterWO]);
+
+  // Yield per order: simple = 1 - (total_defects / delivered_qty)
+  // ALL defects count (open + closed), no severity weighting
+  const orderYields=useMemo(()=>base.map(o=>{
+    const delivered=o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0);
+    const totalDef=(o.defects||[]).length;
+    const openDef=(o.defects||[]).filter(d=>d.status!=="closed").length;
+    const closedDef=(o.defects||[]).filter(d=>d.status==="closed").length;
+    const critHigh=(o.defects||[]).filter(d=>["critical","high"].includes(d.severity)).length;
+    const proj=projects.find(p=>p.id===o.projectId);
+    // Yield = (delivered - totalDef) / delivered * 100
+    // defect rate = totalDef / delivered * 100
+    const defectRate=delivered>0?(totalDef/delivered)*100:null;
+    const yieldPct=defectRate!==null?Math.max(0,Math.min(100,100-defectRate)):null;
+    return{...o,delivered,totalDef,openDef,closedDef,critHigh,yieldPct,defectRate,proj,
+      yieldColor:yieldPct===null?"#64748b":yieldPct>=95?"#10b981":yieldPct>=85?"#3b82f6":yieldPct>=70?"#f59e0b":"#ef4444"
+    };
+  }).filter(o=>o.delivered>0||o.totalDef>0),[base]);
+
+  // Yield over time (by period) — ALL defects, no severity weight
+  const timeData=useMemo(()=>{
+    const keyFn=d=>period==="month"?mkKey(d):period==="quarter"?qKey(d):yrKey(d);
+    const buckets={};
+    base.forEach(o=>{
+      o.deliveries.forEach(d=>{
+        const k=keyFn(d.date);
+        if(!k)return;
+        if(!buckets[k])buckets[k]={delivered:0,defects:0};
+        buckets[k].delivered+=Number(d.qty||0);
+      });
+      // ALL defects (open + closed), attributed to discovery date
+      (o.defects||[]).forEach(df=>{
+        const k=keyFn(df.discoveredDate||"");
+        if(!k)return;
+        if(!buckets[k])buckets[k]={delivered:0,defects:0};
+        buckets[k].defects++;
+      });
+    });
+    return Object.keys(buckets).sort().slice(-12).map(k=>{
+      const b=buckets[k];
+      const y=b.delivered>0?Math.max(0,Math.min(100,100-(b.defects/b.delivered*100))):null;
+      return{label:k,yield:y,delivered:b.delivered,defects:b.defects};
+    });
+  },[base,period]);
+
+  // KPIs
+  const totalDelivered=orderYields.reduce((s,o)=>s+o.delivered,0);
+  const totalAllDef=orderYields.reduce((s,o)=>s+o.totalDef,0);
+  const totalCritHigh=orderYields.reduce((s,o)=>s+o.critHigh,0);
+  const ordersWithYield=orderYields.filter(o=>o.yieldPct!==null);
+  const avgYield=ordersWithYield.length?Math.round(ordersWithYield.reduce((s,o)=>s+o.yieldPct,0)/ordersWithYield.length*10)/10:null;
+  const worstOrders=[...orderYields].filter(o=>o.yieldPct!==null).sort((a,b)=>a.yieldPct-b.yieldPct).slice(0,5);
+  const bestOrders=[...orderYields].filter(o=>o.yieldPct!==null&&o.yieldPct>=95).length;
+
+  const cv=useCssVars();
+  const yieldColor=y=>y===null?"#64748b":y>=95?"#10b981":y>=85?"#3b82f6":y>=70?"#f59e0b":"#ef4444";
+  const yieldLabel=y=>y===null?"—":y>=95?"מצוין":y>=85?"טוב":y>=70?"בינוני":"נמוך";
+
+  // Bar chart for yield over time
+  const YieldTimeChart=({data,height=130})=>{
+    const [hov,setHov]=useState(null);
+    if(!data||!data.length||data.every(d=>d.yield===null))
+      return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--c-dim)",fontSize:13}}>אין נתוני Yield לתקופה זו</div>;
+    const valid=data.filter(d=>d.yield!==null);
+    const padL=36,padR=12,padT=20,padB=44,W=480,H=height+padT+padB;
+    const slotW=(W-padL-padR)/data.length;
+    const bw=Math.min(40,slotW*.55);
+    const bx=i=>padL+i*slotW+slotW/2-bw/2;
+    const bh=v=>Math.max((v/100)*height,2);
+    const by=v=>padT+height-bh(v);
+    const MN=["","ינו","פבר","מרץ","אפר","מאי","יונ","יול","אוג","ספט","אוק","נוב","דצמ"];
+    const fmtL=l=>{if(/^\d{4}-\d{2}$/.test(l)){const[y,m]=l.split("-");return MN[+m]+"'"+y.slice(2)}if(/^\d{4}-Q\d/.test(l)){const p=l.split("-");return p[1]+"'"+p[0].slice(2)}return l};
+    // Reference lines at 95% and 85%
+    const refLines=[{v:95,c:"#10b981",l:"95%"},{v:85,c:"#f59e0b",l:"85%"}];
+    return(
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}}>
+        {/* Grid lines */}
+        {[0,25,50,75,100].map(v=>{const y=padT+height-(v/100)*height;return(
+          <g key={v}><line x1={padL} y1={y} x2={W-padR} y2={y} stroke={v===0?cv.grid:cv.grid2} strokeWidth={v===0?1.5:1} strokeDasharray={v===0?"":"3 3"}/>
+          <text x={padL-6} y={y+4} textAnchor="end" fill={cv.label} fontSize={10} fontFamily="sans-serif">{v}%</text></g>
+        )})}
+        {/* Reference lines */}
+        {refLines.map(({v,c,l})=>{const y=padT+height-(v/100)*height;return(
+          <g key={v}>
+            <line x1={padL} y1={y} x2={W-padR} y2={y} stroke={c} strokeWidth={1.5} strokeDasharray="6 3" opacity={0.6}/>
+            <text x={W-padR+2} y={y+4} fill={c} fontSize={9} fontFamily="sans-serif">{l}</text>
+          </g>
+        )})}
+        {/* Bars */}
+        {data.map((d,i)=>{
+          if(d.yield===null)return null;
+          const x=bx(i),h=bh(d.yield),y=by(d.yield),isH=hov===i,cx2=x+bw/2;
+          const c=yieldColor(d.yield);
+          return(
+            <g key={i} onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)} style={{cursor:"pointer"}}>
+              {isH&&<rect x={x-3} y={y-3} width={bw+6} height={h+3} rx={5} fill={c} opacity={0.15}/>}
+              <rect x={x} y={y} width={bw} height={h} rx={4} fill={isH?c:c+"cc"}/>
+              <rect x={x} y={y} width={bw} height={Math.min(5,h)} rx={4} fill="rgba(255,255,255,.2)"/>
+              {isH&&<g>
+                <rect x={cx2-42} y={y-38} width={84} height={32} rx={5} fill={cv.tooltip} stroke={c} strokeWidth={1}/>
+                <text x={cx2} y={y-22} textAnchor="middle" fill={c} fontSize={12} fontWeight="700" fontFamily="sans-serif">{d.yield.toFixed(1)}%</text>
+                <text x={cx2} y={y-10} textAnchor="middle" fill={cv.muted} fontSize={9} fontFamily="sans-serif">{d.defects} תקלות | {d.delivered.toLocaleString()} יח'</text>
+              </g>}
+            </g>
+          );
+        })}
+        <line x1={padL} y1={padT+height} x2={W-padR} y2={padT+height} stroke={cv.grid} strokeWidth={1.5}/>
+        {data.map((d,i)=><text key={i} x={bx(i)+bw/2} y={padT+height+20} textAnchor="middle" fill={cv.axis} fontSize={11} fontWeight="600" fontFamily="sans-serif">{fmtL(d.label)}</text>)}
+      </svg>
+    );
+  };
+
+  return(
+    <div>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
+        <div>
+          <h2 style={{margin:"0 0 3px",fontSize:22,color:"#10b981"}}>📉 דשבורד Yield ייצור</h2>
+          <div style={{fontSize:12,color:"var(--c-muted)"}}>אחוז התפוקה האיכותית — מחושב לפי אספקות ומשקל תקלות פתוחות</div>
+        </div>
+        {avgYield!==null&&(
+          <div style={{background:yieldColor(avgYield)+"22",border:`2px solid ${yieldColor(avgYield)}`,borderRadius:12,padding:"8px 18px",textAlign:"center"}}>
+            <div style={{fontSize:11,color:"var(--c-muted)"}}>Yield ממוצע</div>
+            <div style={{fontSize:28,fontWeight:800,color:yieldColor(avgYield),lineHeight:1.1}}>{avgYield.toFixed(1)}%</div>
+            <div style={{fontSize:11,color:yieldColor(avgYield),fontWeight:600}}>{yieldLabel(avgYield)}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div style={{position:"sticky",top:52,zIndex:40,background:"var(--c-bg)",paddingTop:6,paddingBottom:4,marginBottom:12}} className="dash-filter-sticky">
+        <Card style={{padding:"10px 14px",display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end",boxShadow:"0 2px 8px #0003"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:3,minWidth:150}}>
+            <label style={{fontSize:11,color:"var(--c-dim)"}}>פרויקט</label>
+            <select value={filterProj} onChange={e=>{setFilterProj(e.target.value);setFilterWO("all")}} style={{padding:"5px 8px",fontSize:12}}>
+              <option value="all">כל הפרויקטים</option>
+              {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:3,minWidth:180}}>
+            <label style={{fontSize:11,color:"var(--c-dim)"}}>פק"ע ספציפית</label>
+            <select value={filterWO} onChange={e=>setFilterWO(e.target.value)} style={{padding:"5px 8px",fontSize:12}}>
+              <option value="all">כל הפקעות</option>
+              {orders.filter(o=>filterProj==="all"||o.projectId===filterProj).map(o=><option key={o.id} value={o.id}>{o.woNumber} — {o.description?.slice(0,25)||""}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}>
+            <label style={{fontSize:11,color:"var(--c-dim)"}}>תקופה בגרף</label>
+            <SegBtn options={[["month","חודשי"],["quarter","רבעוני"],["year","שנתי"]]} value={period} onChange={setPeriod}/>
+          </div>
+          {(filterProj!=="all"||filterWO!=="all")&&<button onClick={()=>{setFilterProj("all");setFilterWO("all")}} style={{background:"#374151",color:"#e2e8f0",border:"none",borderRadius:6,padding:"5px 10px",fontSize:12,fontFamily:"inherit"}}>✕ נקה</button>}
+        </Card>
+      </div>
+
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:9,marginBottom:14}}>
+        <KpiBox i="📉" v={avgYield!==null?avgYield.toFixed(1)+"%":"—"} label="Yield ממוצע" c={yieldColor(avgYield)}/>
+        <KpiBox i="✅" v={bestOrders} label='פקעות ≥95% Yield' c="#10b981"/>
+        <KpiBox i="🔧" v={totalAllDef} label="סה״כ תקלות" c="#ef4444"/>
+        <KpiBox i="🔴" v={totalCritHigh} label="קריטיות+גבוהות" c="#dc2626"/>
+        <KpiBox i="📦" v={totalDelivered.toLocaleString()} label='יח׳ שסופקו' c="#3b82f6"/>
+        <KpiBox i="🏭" v={orderYields.length} label='פקעות פעילות' c="#a78bfa"/>
+      </div>
+
+      {/* Yield over time */}
+      <Card style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+          <div style={{fontWeight:700,fontSize:15}}>📈 Yield לאורך זמן</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            {[{c:"#10b981",l:"≥95% מצוין"},{c:"#3b82f6",l:"85-95% טוב"},{c:"#f59e0b",l:"70-85% בינוני"},{c:"#ef4444",l:"<70% נמוך"}].map(({c,l})=>(
+              <div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:10,height:10,borderRadius:2,background:c}}/><span style={{fontSize:11,color:"var(--c-muted)"}}>{l}</span></div>
+            ))}
+          </div>
+        </div>
+        <YieldTimeChart data={timeData} height={140}/>
+      </Card>
+
+      {/* Yield per order table */}
+      <Card style={{marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>🏭 Yield לפי פקודת עבודה</div>
+        {orderYields.length===0?<div style={{textAlign:"center",padding:30,color:"var(--c-dim)"}}>אין נתונים — ייבא אספקות או תקלות</div>:(
+          <div style={{overflowX:"auto"}}>
+            <table>
+              <thead><tr>
+                <th>פק"ע</th><th>תיאור</th><th>פרויקט</th><th>סופק</th><th>תקלות (סה"כ)</th><th>קריטי/גבוה</th>
+                <th style={{minWidth:120}}>Yield</th><th>דירוג</th>
+              </tr></thead>
+              <tbody>{[...orderYields].sort((a,b)=>(a.yieldPct??999)-(b.yieldPct??999)).map(o=>(
+                <tr key={o.id}>
+                  <td style={{fontWeight:700,color:"#60a5fa",whiteSpace:"nowrap"}}>{o.woNumber}</td>
+                  <td style={{color:"var(--c-muted)",fontSize:12,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.description||"—"}</td>
+                  <td style={{fontSize:12,color:"#93c5fd",whiteSpace:"nowrap"}}>{o.proj?.name||"—"}</td>
+                  <td style={{color:"#10b981",fontWeight:600,textAlign:"center"}}>{o.delivered.toLocaleString()}</td>
+                  <td style={{color:o.totalDef>0?"#ef4444":"var(--c-dim)",fontWeight:600,textAlign:"center"}}>{o.totalDef}</td>
+                  <td style={{color:o.critHigh>0?"#dc2626":"var(--c-dim)",fontWeight:700,textAlign:"center"}}>{o.critHigh}</td>
+                  <td>
+                    {o.yieldPct!==null?(
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{flex:1,height:8,background:"var(--c-border)",borderRadius:4,overflow:"hidden",minWidth:60}}>
+                          <div style={{width:o.yieldPct+"%",height:"100%",background:yieldColor(o.yieldPct),borderRadius:4,transition:"width .5s"}}/>
+                        </div>
+                        <span style={{fontWeight:700,color:yieldColor(o.yieldPct),minWidth:44,textAlign:"left"}}>{o.yieldPct.toFixed(1)}%</span>
+                      </div>
+                    ):<span style={{color:"var(--c-dim)",fontSize:12}}>אין אספקות</span>}
+                  </td>
+                  <td style={{textAlign:"center"}}>
+                    <span style={{background:yieldColor(o.yieldPct)+"22",color:yieldColor(o.yieldPct),padding:"2px 8px",borderRadius:12,fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>{yieldLabel(o.yieldPct)}</span>
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Worst performers */}
+      {worstOrders.length>0&&(
+        <Card style={{border:"1px solid #ef444433"}}>
+          <div style={{fontWeight:700,fontSize:15,color:"#ef4444",marginBottom:12}}>🚨 פקעות עם Yield נמוך ביותר</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {worstOrders.map((o,i)=>(
+              <div key={o.id} style={{background:"var(--c-deep)",borderRadius:9,padding:"12px 14px",border:`1px solid ${yieldColor(o.yieldPct)}33`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+                  <div>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                      <span style={{fontWeight:700,color:"#60a5fa"}}>{o.woNumber}</span>
+                      {o.proj&&<span style={{fontSize:11,background:"var(--c-tag-blue-bg)",color:"var(--c-tag-blue)",padding:"2px 7px",borderRadius:20}}>{o.proj.name}</span>}
+                      <span style={{fontSize:11,background:yieldColor(o.yieldPct)+"22",color:yieldColor(o.yieldPct),padding:"2px 8px",borderRadius:12,fontWeight:600}}>Yield {o.yieldPct.toFixed(1)}%</span>
+                    </div>
+                    {o.description&&<div style={{fontSize:12,color:"var(--c-muted)",marginBottom:4}}>{o.description}</div>}
+                    <div style={{fontSize:11,color:"var(--c-dim)",display:"flex",gap:12,flexWrap:"wrap"}}>
+                      <span>סופק: <b style={{color:"var(--c-text)"}}>{o.delivered.toLocaleString()} יח'</b></span>
+                      <span>סה"כ תקלות: <b style={{color:"#ef4444"}}>{o.totalDef}</b></span>
+                      {o.critHigh>0&&<span>קריטי/גבוה: <b style={{color:"#dc2626"}}>{o.critHigh}</b></span>}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"center",minWidth:60}}>
+                    <div style={{fontSize:28,fontWeight:800,color:yieldColor(o.yieldPct),lineHeight:1}}>{o.yieldPct.toFixed(0)}%</div>
+                    <div style={{fontSize:10,color:"var(--c-dim)"}}>מקום #{i+1}</div>
+                  </div>
+                </div>
+                {/* Defects breakdown */}
+                {o.allDef>0&&(
+                  <div style={{marginTop:8,display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {["critical","high","medium","low"].map(sev=>{
+                      const sevLabel={critical:"🔴 קריטית",high:"🟠 גבוהה",medium:"🟡 בינונית",low:"🟢 נמוכה"};
+                      const sevColor={critical:"#dc2626",high:"#f97316",medium:"#f59e0b",low:"#10b981"};
+                      const cnt=(o.defects||[]).filter(d=>d.severity===sev&&d.status!=="closed").length;
+                      if(!cnt)return null;
+                      return<span key={sev} style={{fontSize:11,background:sevColor[sev]+"22",color:sevColor[sev],padding:"2px 8px",borderRadius:12,border:`1px solid ${sevColor[sev]}44`}}>{sevLabel[sev]}: {cnt}</span>;
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
       )}
     </div>
   );
@@ -1397,6 +1791,7 @@ function App(){
         {tab==="orders"&&<Orders orders={filteredOrders} projects={filteredProjects} updO={updO}/>}
         {tab==="shortages"&&<Shortages orders={filteredOrders} updO={updO} projects={filteredProjects}/>}
         {tab==="defects"&&<DefectsDashboard orders={filteredOrders} projects={filteredProjects} updO={updO}/>}
+        {tab==="yield"&&<YieldDashboard orders={filteredOrders} projects={filteredProjects}/>}
         {tab==="projects"&&<Projects projects={filteredProjects} orders={filteredOrders} updP={updP}/>}
         {tab==="excel"&&<ExcelTab orders={filteredOrders} projects={filteredProjects} updO={updO}/>}
       </main>
