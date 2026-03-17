@@ -359,93 +359,770 @@ function xlDateToISO(v){if(!v)return"";if(typeof v==="string"&&v.match(/^\d{4}-\
 function doExport(orders,projects){const wb=XLSX.utils.book_new();const o2r=o=>{const proj=projects.find(p=>p.id===o.projectId);const sup=o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0);return{"מספר פק\"ע":o.woNumber,"תיאור":o.description||"","פרויקט":proj?proj.name:"","כמות":Number(o.qty||0),"מחיר ליחידה":Number(o.unitPrice||0),"סופק":sup,"יתרה":Number(o.qty||0)-sup,"הכנסות":sup*Number(o.unitPrice||0),"תאריך קבלה":o.receivedDate||"","יעד אספקה":o.targetDate||"","סטטוס":SL[o.status]||"","חוסרים פתוחים":(o.shortages||[]).filter(s=>!s.received).length}};XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(orders.map(o2r)),"פקודות עבודה");const dels=orders.flatMap(o=>o.deliveries.map(d=>({"מספר פק\"ע":o.woNumber,"תאריך":d.date||"","כמות":Number(d.qty||0),"הכנסה":Number(d.qty||0)*Number(o.unitPrice||0),"הערה":d.note||""})));XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(dels.length?dels:[{}]),"אספקות");const shs=orders.flatMap(o=>(o.shortages||[]).map(s=>({"מספר פק\"ע":o.woNumber,"פריט":s.item,"כמות חסרה":s.missing||"","הוזמן":s.orderedDate||"","התקבל":s.receivedDate||"","סטטוס":s.received?"התקבל":"ממתין","הערה":s.note||""})));XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(shs.length?shs:[{}]),"חוסרים");const mon={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=mkKey(d.date);if(!k)return;if(!mon[k])mon[k]={k,qty:0,rev:0};mon[k].qty+=Number(d.qty||0);mon[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));const qtr={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=qKey(d.date);if(!k)return;if(!qtr[k])qtr[k]={k,qty:0,rev:0};qtr[k].qty+=Number(d.qty||0);qtr[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.values(mon).sort((a,b)=>a.k.localeCompare(b.k)).map(m=>({"חודש":m.k,"כמות":m.qty,"הכנסות":m.rev}))),"חודשי");XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.values(qtr).sort((a,b)=>a.k.localeCompare(b.k)).map(q=>({"רבעון":q.k,"כמות":q.qty,"הכנסות":q.rev}))),"רבעוני");XLSX.writeFile(wb,"דוח_ייצור_"+todays()+".xlsx")}
 function doImport(file,projects,cb){
   const fr=new FileReader();
-  fr.onload=e=>{
-    try{
-      const wb=XLSX.read(e.target.result,{type:"array"});
-      const sn=wb.SheetNames;
-
-      // Sheet 1: פקודות עבודה
-      const wsO=wb.Sheets[sn[0]];
-      const rowsO=XLSX.utils.sheet_to_json(wsO,{defval:""});
-      const oMap={};
-      rowsO.forEach(r=>{
-        const wo=String(r['מספר פק"ע']||r["WO"]||r["wo_number"]||r["פקע"]||"").trim();
-        if(!wo)return;
-        const pn=String(r["פרויקט"]||r["project"]||"").trim();
-        oMap[wo]={id:uid(),woNumber:wo,
-          description:String(r["תיאור"]||r["description"]||"").trim(),
-          qty:Number(r["כמות"]||r["qty"]||0),
-          unitPrice:Number(r["מחיר ליחידה"]||r["מחיר"]||r["unit_price"]||0),
-          projectId:projects.find(p=>p.name===pn)?.id||"",
-          receivedDate:xlDateToISO(r["תאריך קבלה"]||r["received_date"]||""),
-          targetDate:xlDateToISO(r["יעד אספקה"]||r["target_date"]||r["יעד"]||""),
-          deliveries:[],shortages:[],defects:[],status:"open"
-        };
+  fr.onload=e=>{try{
+    const wb=XLSX.read(e.target.result,{type:"array"});
+    const sn=wb.SheetNames;
+    // Sheet 1: פקודות עבודה
+    const wsO=wb.Sheets[sn[0]];
+    const rowsO=XLSX.utils.sheet_to_json(wsO,{defval:""});
+    const oMap={};
+    rowsO.forEach(r=>{
+      const wo=String(r['מספר פק"ע']||r["WO"]||r["wo_number"]||r["פקע"]||"").trim();
+      if(!wo)return;
+      const pn=String(r["פרויקט"]||r["project"]||"").trim();
+      oMap[wo]={id:uid(),woNumber:wo,
+        description:String(r["תיאור"]||r["description"]||"").trim(),
+        qty:Number(r["כמות"]||r["qty"]||0),
+        unitPrice:Number(r["מחיר ליחידה"]||r["מחיר"]||r["unit_price"]||0),
+        projectId:projects.find(p=>p.name===pn)?.id||"",
+        receivedDate:xlDateToISO(r["תאריך קבלה"]||r["received_date"]||""),
+        targetDate:xlDateToISO(r["יעד אספקה"]||r["target_date"]||r["יעד"]||""),
+        deliveries:[],shortages:[],defects:[],status:"open"
+      };
+    });
+    // Sheet 2: אספקות
+    const wsD=wb.Sheets[sn[1]];
+    if(wsD){XLSX.utils.sheet_to_json(wsD,{defval:""}).forEach(r=>{
+      const wo=String(r['מספר פק"ע']||r["WO"]||"").trim();
+      if(!wo||!oMap[wo])return;
+      const qty=Number(r["כמות"]||r["qty"]||0);
+      if(!qty)return;
+      oMap[wo].deliveries.push({id:uid(),qty,date:xlDateToISO(r["תאריך"]||r["date"]||""),note:String(r["הערה"]||r["note"]||"").trim()});
+    });}
+    // Sheet 3: חוסרים
+    const wsS=wb.Sheets[sn[2]];
+    if(wsS){XLSX.utils.sheet_to_json(wsS,{defval:""}).forEach(r=>{
+      const wo=String(r['מספר פק"ע']||r["WO"]||"").trim();
+      if(!wo||!oMap[wo])return;
+      const item=String(r["פריט"]||r["item"]||"").trim();
+      if(!item)return;
+      const received=String(r["סטטוס"]||r["status"]||"").includes("התקבל");
+      oMap[wo].shortages.push({id:uid(),item,
+        sku:String(r['מק"ט']||r["sku"]||"").trim(),
+        missing:Number(r["כמות חסרה"]||r["missing"]||0),
+        reason:String(r["סיבה"]||r["reason"]||"").trim(),
+        responsible:String(r["אחראי"]||r["responsible"]||"").trim(),
+        orderedDate:xlDateToISO(r["הוזמן"]||r["ordered_date"]||""),
+        receivedDate:xlDateToISO(r["התקבל"]||r["received_date"]||""),
+        receivedQty:Number(r["כמות שהתקבלה"]||0),
+        note:String(r["הערה"]||r["note"]||"").trim(),
+        received
       });
-
-      // Sheet 2: אספקות
-      const wsD=wb.Sheets[sn[1]];
-      if(wsD){XLSX.utils.sheet_to_json(wsD,{defval:""}).forEach(r=>{
+    });}
+    // Sheet 4: תקלות
+    const wsF=wb.Sheets[sn[3]];
+    if(wsF){
+      const sMap={"קריטית":"critical","גבוהה":"high","בינונית":"medium","נמוכה":"low"};
+      const tMap={"איכות":"quality","תהליך":"process","חומר גלם":"material","ציוד":"equipment","גורם אנושי":"human","אחר":"other"};
+      XLSX.utils.sheet_to_json(wsF,{defval:""}).forEach(r=>{
         const wo=String(r['מספר פק"ע']||r["WO"]||"").trim();
         if(!wo||!oMap[wo])return;
-        const qty=Number(r["כמות"]||r["qty"]||0);
-        if(!qty)return;
-        oMap[wo].deliveries.push({id:uid(),qty,date:xlDateToISO(r["תאריך"]||r["date"]||""),note:String(r["הערה"]||r["note"]||"").trim()});
-      });}
-
-      // Sheet 3: חוסרים
-      const wsS=wb.Sheets[sn[2]];
-      if(wsS){XLSX.utils.sheet_to_json(wsS,{defval:""}).forEach(r=>{
-        const wo=String(r['מספר פק"ע']||r["WO"]||"").trim();
-        if(!wo||!oMap[wo])return;
-        const item=String(r["פריט"]||r["item"]||"").trim();
-        if(!item)return;
-        const received=String(r["סטטוס"]||r["status"]||"").includes("התקבל");
-        oMap[wo].shortages.push({id:uid(),item,
-          sku:String(r['מק"ט']||r["sku"]||"").trim(),
-          missing:Number(r["כמות חסרה"]||r["missing"]||0),
-          reason:String(r["סיבה"]||r["reason"]||"").trim(),
+        const title=String(r["כותרת"]||r["תקלה"]||r["title"]||"").trim();
+        if(!title)return;
+        const closed=String(r["סטטוס"]||r["status"]||"").includes("סגור");
+        oMap[wo].defects.push({id:uid(),title,
+          severity:sMap[String(r["חומרה"]||r["severity"]||"בינונית")]||"medium",
+          type:tMap[String(r["סוג"]||r["type"]||"אחר")]||"other",
+          description:String(r["תיאור"]||r["description"]||"").trim(),
           responsible:String(r["אחראי"]||r["responsible"]||"").trim(),
-          orderedDate:xlDateToISO(r["הוזמן"]||r["ordered_date"]||""),
-          receivedDate:xlDateToISO(r["התקבל"]||r["received_date"]||""),
-          receivedQty:Number(r["כמות שהתקבלה"]||0),
-          note:String(r["הערה"]||r["note"]||"").trim(),
-          received
+          discoveredDate:xlDateToISO(r["תאריך גילוי"]||r["discovered_date"]||""),
+          closedDate:xlDateToISO(r["תאריך סגירה"]||r["closed_date"]||""),
+          status:closed?"closed":"open"
         });
-      });}
-
-      // Sheet 4: תקלות
-      const wsF=wb.Sheets[sn[3]];
-      if(wsF){
-        const sMap={"קריטית":"critical","גבוהה":"high","בינונית":"medium","נמוכה":"low"};
-        const tMap={"איכות":"quality","תהליך":"process","חומר גלם":"material","ציוד":"equipment","גורם אנושי":"human","אחר":"other"};
-        XLSX.utils.sheet_to_json(wsF,{defval:""}).forEach(r=>{
-          const wo=String(r['מספר פק"ע']||r["WO"]||"").trim();
-          if(!wo||!oMap[wo])return;
-          const title=String(r["כותרת"]||r["תקלה"]||r["title"]||"").trim();
-          if(!title)return;
-          const closed=String(r["סטטוס"]||r["status"]||"").includes("סגור");
-          const sevHe=String(r["חומרה"]||r["severity"]||"בינונית");
-          const typeHe=String(r["סוג"]||r["type"]||"אחר");
-          oMap[wo].defects.push({id:uid(),title,
-            severity:sMap[sevHe]||"medium",
-            type:tMap[typeHe]||"other",
-            description:String(r["תיאור"]||r["description"]||"").trim(),
-            responsible:String(r["אחראי"]||r["responsible"]||"").trim(),
-            discoveredDate:xlDateToISO(r["תאריך גילוי"]||r["discovered_date"]||""),
-            closedDate:xlDateToISO(r["תאריך סגירה"]||r["closed_date"]||""),
-            status:closed?"closed":"open"
-          });
-        });
-      }
-
-      const imp=Object.values(oMap).map(o=>({...o,status:calcStatus(o)}));
-      cb(imp,null);
-    }catch(err){cb(null,"שגיאה בקריאת הקובץ: "+err.message)}
-  };
+      });
+    }
+    const imp=Object.values(oMap).map(o=>({...o,status:calcStatus(o)}));
+    cb(imp,null);
+  }catch(err){cb(null,"שגיאה בקריאת הקובץ: "+err.message)}};
   fr.readAsArrayBuffer(file);
 }
 
+// ── Theme / Customize ──────────────────────────────────────────────────────────
+const DEFAULT_THEME={accentBlue:"#3b82f6",accentGreen:"#10b981",accentPurple:"#a78bfa",accentAmber:"#f59e0b",accentRed:"#ef4444",bgMain:"#0f1117",bgCard:"#1e2130",bgDeep:"#131825",textPrimary:"#e2e8f0",textMuted:"#94a3b8",fontSize:14,borderRadius:12,cardPadding:20,chartHeight:150,fontFamily:"'Segoe UI',Tahoma,Arial,sans-serif"};
+function applyTheme(t){const r=document.documentElement.style;r.setProperty("--bg-main",t.bgMain);r.setProperty("--bg-card",t.bgCard);r.setProperty("--bg-deep",t.bgDeep);document.body.style.fontSize=t.fontSize+"px"}
+function CustomizePanel({onClose}){
+  const [theme,setTheme]=useState(()=>{try{const s=localStorage.getItem("pmo_theme");return s?{...DEFAULT_THEME,...JSON.parse(s)}:DEFAULT_THEME}catch{return DEFAULT_THEME}});
+  const save=()=>{localStorage.setItem("pmo_theme",JSON.stringify(theme));applyTheme(theme);onClose()};
+  const reset=()=>{setTheme(DEFAULT_THEME);localStorage.removeItem("pmo_theme");applyTheme(DEFAULT_THEME);onClose()};
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:16,padding:28,maxWidth:520,width:"100%",maxHeight:"90vh",overflowY:"auto",border:"1px solid var(--c-border2)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><div style={{fontWeight:700,fontSize:18}}>🎨 התאמה אישית</div><button onClick={onClose} style={{background:"none",border:"none",color:"#64748b",fontSize:20}}>✕</button></div>
+        <div style={{marginBottom:16}}><label style={{fontSize:12,color:"var(--c-muted)",display:"block",marginBottom:6}}>גודל פונט: <b style={{color:"var(--c-text)"}}>{theme.fontSize}px</b></label><input type="range" min={11} max={18} value={theme.fontSize} onChange={e=>setTheme(p=>({...p,fontSize:Number(e.target.value)}))} style={{width:"100%",accentColor:"#3b82f6"}}/></div>
+        <div style={{marginBottom:16}}><label style={{fontSize:12,color:"var(--c-muted)",display:"block",marginBottom:6}}>🎨 צבע ראשי</label><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{[["כחול","#3b82f6"],["ירוק","#10b981"],["סגול","#8b5cf6"],["כתום","#f97316"]].map(([l,c])=><button key={c} onClick={()=>setTheme(p=>({...p,accentBlue:c}))} style={{background:c,border:theme.accentBlue===c?"3px solid #fff":"3px solid transparent",borderRadius:8,width:36,height:36,cursor:"pointer"}} title={l}/>)}</div></div>
+        <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:20}}>
+          <Btn onClick={reset}>↺ איפוס</Btn>
+          <Btn color="#3b82f6" onClick={save}>✅ שמור</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Login Screen ───────────────────────────────────────────────────────────────
+function LoginScreen({onLogin,lightMode,toggleLight}){
+  const [username,setUsername]=useState("");
+  const [password,setPassword]=useState("");
+  const [err,setErr]=useState("");
+  const [showPass,setShowPass]=useState(false);
+  const [loading,setLoading]=useState(false);
+  const attempt=async()=>{
+    setLoading(true);setErr("");
+    await new Promise(r=>setTimeout(r,200));
+    const users=getUsers();
+    const u=users.find(u=>u.username===username&&u.password===password&&u.active!==false);
+    if(!u){setErr("שם משתמש או סיסמה שגויים");setLoading(false);return}
+    addAuditEntry({userId:u.id,username:u.username,name:u.name,action:"התחברות למערכת",target:"",details:""});
+    onLogin(u);
+  };
+  const lm=lightMode;
+  return(
+    <div style={{minHeight:"100vh",minHeight:"100dvh",background:lm?"#f0f4f8":"#0f1117",display:"flex",alignItems:"center",justifyContent:"center",padding:16,transition:"background .3s"}}>
+      <div style={{position:"fixed",top:16,left:16,zIndex:10}}>
+        <button onClick={toggleLight} style={{background:lm?"#e2e8f0":"#1e2130",border:`1px solid ${lm?"#e2e8f0":"#2d3748"}`,borderRadius:8,padding:"7px 14px",fontSize:15,color:lm?"#1e293b":"#94a3b8",fontWeight:600,display:"flex",alignItems:"center",gap:6}}>{lm?"🌙 כהה":"☀️ בהיר"}</button>
+      </div>
+      <div style={{background:lm?"#ffffff":"#1e2130",borderRadius:20,padding:"clamp(24px,6vw,44px) clamp(20px,6vw,40px)",maxWidth:420,width:"100%",border:`1px solid ${lm?"#e2e8f0":"#2d3748"}`,boxShadow:lm?"0 8px 40px #0001":"0 20px 60px #000a"}}>
+        <div style={{textAlign:"center",marginBottom:32}}><div style={{fontSize:52,marginBottom:10}}>🏭</div><div style={{fontSize:24,fontWeight:800,color:lm?"#1e293b":"#e2e8f0",letterSpacing:-.5}}>ניהול ייצור</div><div style={{fontSize:13,color:lm?"#64748b":"#94a3b8",marginTop:6}}>כניסה למערכת</div></div>
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>
+          <div><label style={{fontSize:12,color:lm?"#64748b":"#94a3b8",fontWeight:600,display:"block",marginBottom:5}}>שם משתמש</label><input value={username} onChange={e=>setUsername(e.target.value)} onKeyDown={e=>e.key==="Enter"&&attempt()} placeholder="הכנס שם משתמש" autoComplete="username" style={{background:lm?"#f8fafc":"#131825",borderColor:lm?"#cbd5e1":"#374151",color:lm?"#1e293b":"#e2e8f0",padding:"11px 14px",fontSize:15}}/></div>
+          <div><label style={{fontSize:12,color:lm?"#64748b":"#94a3b8",fontWeight:600,display:"block",marginBottom:5}}>סיסמה</label>
+            <div style={{position:"relative"}}>
+              <input type={showPass?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&attempt()} placeholder="הכנס סיסמה" autoComplete="current-password" style={{background:lm?"#f8fafc":"#131825",borderColor:lm?"#cbd5e1":"#374151",color:lm?"#1e293b":"#e2e8f0",padding:"11px 14px",paddingLeft:44,fontSize:15}}/>
+              <button onClick={()=>setShowPass(p=>!p)} style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",fontSize:18,color:lm?"#64748b":"#94a3b8",lineHeight:1}}>{showPass?"🙈":"👁️"}</button>
+            </div>
+          </div>
+          {err&&<div style={{background:lm?"#fee2e2":"#450a0a",color:lm?"#dc2626":"#fca5a5",borderRadius:8,padding:"10px 14px",fontSize:13,border:lm?"1px solid #fecaca":"1px solid #7f1d1d"}}>❌ {err}</div>}
+          <button onClick={attempt} disabled={loading} style={{background:loading?"#2563eb99":"#3b82f6",color:"#fff",border:"none",borderRadius:10,padding:"13px",fontWeight:700,fontSize:16,marginTop:4}}>{loading?"⏳ מתחבר...":"כניסה למערכת"}</button>
+        </div>
+        <div style={{textAlign:"center",marginTop:22,fontSize:12,color:lm?"#64748b":"#94a3b8"}}>פנה למנהל המערכת לקבלת פרטי כניסה</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Admin Panel ────────────────────────────────────────────────────────────────
+function AdminPanel({projects,onClose,lightMode,orders,setOrders,setProjects,persist}){
+  const {currentUser}=useAuth();
+  const [users,setUsers]=useState(getUsers());
+  const [tab,setTab]=useState("users");
+  const [auditLog,setAuditLog]=useState(getAuditLog());
+  const [auditFilter,setAuditFilter]=useState("all");
+  const [editUser,setEditUser]=useState(null);
+  const [addMode,setAddMode]=useState(false);
+  const [newUser,setNewUser]=useState({username:"",password:"",name:"",role:"viewer",projectAccess:"all",canEdit:false,canView:true,active:true});
+  const [revertConfirm,setRevertConfirm]=useState(null);
+  const [snapshotModal,setSnapshotModal]=useState(null);
+  const lm=lightMode;
+  const card=lm?"#ffffff":"#1e2130";
+  const border=lm?"#e2e8f0":"#2d3748";
+  const text=lm?"#1e293b":"#e2e8f0";
+  const muted=lm?"#64748b":"#94a3b8";
+  const bg=lm?"#f8fafc":"#131825";
+  const inputBg=lm?"#f8fafc":"#0f1117";
+  const inputBd=lm?"#cbd5e1":"#374151";
+  const inp={background:inputBg,border:`1px solid ${inputBd}`,color:text,borderRadius:6,padding:"7px 10px",paddingRight:"30px",fontSize:13,width:"100%",outline:"none",fontFamily:"inherit"};
+  const fmtTS=ts=>{if(!ts)return"—";const d=new Date(ts);return d.toLocaleDateString("he-IL")+" "+d.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"})};
+  const saveUser=()=>{if(!editUser.username||!editUser.name)return alert("שם משתמש ושם מלא הם שדות חובה");const updated=users.map(u=>u.id===editUser.id?editUser:u);saveUsers(updated);setUsers(updated);addAuditEntry({userId:currentUser.id,username:currentUser.username,name:currentUser.name,action:"עדכון משתמש",target:editUser.username,details:`עודכן: ${editUser.name}`});setEditUser(null)};
+  const addUser=()=>{if(!newUser.username||!newUser.password||!newUser.name)return alert("כל השדות הם חובה");if(users.find(u=>u.username===newUser.username))return alert("שם משתמש כבר קיים");const u={...newUser,id:uid()};const updated=[...users,u];saveUsers(updated);setUsers(updated);addAuditEntry({userId:currentUser.id,username:currentUser.username,name:currentUser.name,action:"הוספת משתמש",target:newUser.username,details:`נוסף: ${newUser.name}`});setNewUser({username:"",password:"",name:"",role:"viewer",projectAccess:"all",canEdit:false,canView:true,active:true});setAddMode(false);setAuditLog(getAuditLog())};
+  const deleteUser=id=>{if(id==="admin")return alert("לא ניתן למחוק את משתמש admin");if(!confirm("האם למחוק משתמש?"))return;const u=users.find(u=>u.id===id);const updated=users.filter(u=>u.id!==id);saveUsers(updated);setUsers(updated);addAuditEntry({userId:currentUser.id,username:currentUser.username,name:currentUser.name,action:"מחיקת משתמש",target:u?.username||id,details:""});setAuditLog(getAuditLog())};
+  const toggleActive=id=>{const updated=users.map(u=>u.id===id?{...u,active:!u.active}:u);saveUsers(updated);setUsers(updated)};
+  const filteredLog=auditLog.filter(e=>auditFilter==="all"||e.userId===auditFilter);
+  const revertAction=entry=>{if(!entry||!persist)return;if(entry.entityType==="project"){if(!entry.snapshot?.prevList||!setProjects)return;setProjects(entry.snapshot.prevList);persist(null,entry.snapshot.prevList)}else{if(!entry.snapshot?.before||!setOrders)return;const before=entry.snapshot.before;setOrders(prev=>{const next=prev.map(o=>o.id===before.id?before:o);persist(next,null);return next})}updateAuditEntry(entry.id,{reverted:true,revertedBy:currentUser.username,revertedAt:new Date().toISOString()});addAuditEntry({userId:currentUser.id,username:currentUser.username,name:currentUser.name,action:`ביטול פעולה: ${entry.action}`,target:entry.target,details:`בוטלה פעולה של ${entry.name}`,reversible:false});setAuditLog(getAuditLog());setRevertConfirm(null)};
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:card,borderRadius:18,padding:24,maxWidth:860,width:"100%",maxHeight:"90vh",overflowY:"auto",border:`1px solid ${border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}><div style={{fontWeight:800,fontSize:18,color:"#3b82f6"}}>🛡️ ניהול משתמשים והרשאות</div><button onClick={onClose} style={{background:"none",border:"none",color:muted,fontSize:22}}>✕</button></div>
+        <div style={{display:"flex",borderBottom:`1px solid ${border}`,marginBottom:20}}>
+          {[["users","👥 משתמשים"],["audit","📋 יומן פעילות"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setTab(v)} style={{background:"none",border:"none",padding:"10px 18px",color:tab===v?"#3b82f6":muted,borderBottom:tab===v?"3px solid #3b82f6":"3px solid transparent",fontWeight:tab===v?700:400,fontSize:14,fontFamily:"inherit"}}>{l}</button>
+          ))}
+        </div>
+        {tab==="users"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"flex-end",marginBottom:14}}><button onClick={()=>setAddMode(p=>!p)} style={{background:"#3b82f6",color:"#fff",border:"none",borderRadius:8,padding:"8px 18px",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>+ הוסף משתמש</button></div>
+            {addMode&&(<div style={{background:bg,borderRadius:12,padding:16,marginBottom:16,border:"1px solid #3b82f633"}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#3b82f6",marginBottom:12}}>+ משתמש חדש</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10,marginBottom:12}}>
+                {[["שם משתמש","username"],["סיסמה","password"],["שם מלא","name"]].map(([l,k])=>(
+                  <div key={k}><label style={{fontSize:11,color:muted,display:"block",marginBottom:3}}>{l}</label><input style={inp} value={newUser[k]} onChange={e=>setNewUser(p=>({...p,[k]:e.target.value}))} type={k==="password"?"password":"text"}/></div>
+                ))}
+                <div><label style={{fontSize:11,color:muted,display:"block",marginBottom:3}}>תפקיד</label>
+                  <select style={inp} value={newUser.role} onChange={e=>setNewUser(p=>({...p,role:e.target.value,canEdit:e.target.value!=="viewer",canView:true}))}>
+                    <option value="viewer">👁️ צופה</option><option value="editor">✏️ עורך</option><option value="admin">🛡️ מנהל</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:8}}><Btn color="#10b981" onClick={addUser}>✅ הוסף</Btn><Btn onClick={()=>setAddMode(false)}>ביטול</Btn></div>
+            </div>)}
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {users.map(u=>(
+                <div key={u.id} style={{background:bg,borderRadius:10,padding:"12px 14px",border:`1px solid ${u.active!==false?"#3b82f622":"#ef444422"}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                  <div>
+                    <div style={{fontWeight:700,color:text}}>{u.name} <span style={{fontSize:12,color:muted}}>(@{u.username})</span></div>
+                    <div style={{fontSize:12,color:muted,marginTop:2}}>{u.role==="admin"?"🛡️ מנהל":u.role==="editor"?"✏️ עורך":"👁️ צופה"} · גישה: {u.projectAccess==="all"?"כל הפרויקטים":Array.isArray(u.projectAccess)?`${u.projectAccess.length} פרויקטים`:u.projectAccess}</div>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:11,padding:"2px 8px",borderRadius:12,background:u.active!==false?"#052e16":"#450a0a",color:u.active!==false?"#6ee7b7":"#fca5a5"}}>{u.active!==false?"✅ פעיל":"❌ מושבת"}</span>
+                    <button onClick={()=>toggleActive(u.id)} style={{background:"#374151",color:"#e2e8f0",border:"none",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:"inherit"}}>{u.active!==false?"השבת":"הפעל"}</button>
+                    <button onClick={()=>setEditUser({...u})} style={{background:"#1e3a5f",color:"#60a5fa",border:"none",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:"inherit"}}>✏️ ערוך</button>
+                    {u.id!=="admin"&&<button onClick={()=>deleteUser(u.id)} style={{background:"#450a0a",color:"#fca5a5",border:"none",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:"inherit"}}>🗑️</button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {tab==="audit"&&(
+          <div>
+            <div style={{marginBottom:12,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <label style={{fontSize:12,color:muted}}>סנן לפי משתמש:</label>
+              <select value={auditFilter} onChange={e=>setAuditFilter(e.target.value)} style={{...inp,width:"auto",minWidth:160}}><option value="all">כל המשתמשים</option>{users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"50vh",overflowY:"auto"}}>
+              {filteredLog.length===0?<div style={{textAlign:"center",padding:30,color:muted}}>אין רשומות</div>:filteredLog.map(e=>(
+                <div key={e.id} style={{background:bg,borderRadius:8,padding:"10px 14px",border:`1px solid ${e.reverted?"#10b98133":"#3b82f622"}`,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:text}}>{e.action}</div>
+                    <div style={{fontSize:11,color:muted,marginTop:2}}>👤 {e.name} · ⏰ {fmtTS(e.timestamp)}{e.target&&` · 🎯 ${e.target}`}{e.reverted&&<span style={{color:"#10b981"}}> · ↩️ בוטל</span>}</div>
+                  </div>
+                  <div style={{display:"flex",gap:4}}>
+                    {e.snapshot&&<button onClick={()=>setSnapshotModal(e)} style={{background:"#1e3a5f",color:"#60a5fa",border:"none",borderRadius:6,padding:"3px 8px",fontSize:11,fontFamily:"inherit"}}>📸</button>}
+                    {e.reversible&&!e.reverted&&<button onClick={()=>setRevertConfirm(e)} style={{background:"#450a0a",color:"#fca5a5",border:"none",borderRadius:6,padding:"3px 8px",fontSize:11,fontFamily:"inherit"}}>↩️</button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      {editUser&&(
+        <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:card,borderRadius:16,padding:28,maxWidth:560,width:"100%",border:`1px solid ${border}`,maxHeight:"90vh",overflowY:"auto"}}>
+            <div style={{fontWeight:700,fontSize:17,color:"#3b82f6",marginBottom:18}}>✏️ עריכת משתמש: {editUser.username}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:16}}>
+              {[["שם מלא","name"],["שם משתמש","username"],["סיסמה חדשה","password"]].map(([l,k])=>(
+                <div key={k}><label style={{fontSize:11,color:muted,display:"block",marginBottom:3}}>{l}</label><input style={inp} value={editUser[k]||""} onChange={e=>setEditUser(p=>({...p,[k]:e.target.value}))} type={k==="password"?"password":"text"}/></div>
+              ))}
+              <div><label style={{fontSize:11,color:muted,display:"block",marginBottom:3}}>תפקיד</label>
+                <select style={inp} value={editUser.role} onChange={e=>setEditUser(p=>({...p,role:e.target.value,canEdit:e.target.value!=="viewer",canView:true}))}>
+                  <option value="viewer">👁️ צופה</option><option value="editor">✏️ עורך</option><option value="admin">🛡️ מנהל</option>
+                </select>
+              </div>
+              <div style={{gridColumn:"1/-1"}}><label style={{fontSize:11,color:muted,display:"block",marginBottom:3}}>גישה לפרויקטים</label>
+                <div style={{border:`1px solid ${inputBd}`,borderRadius:6,background:inputBg,padding:8}}>
+                  <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer",color:text,marginBottom:6,paddingBottom:6,borderBottom:`1px solid ${inputBd}`}}>
+                    <input type="checkbox" style={{width:"auto"}} checked={(editUser.projectAccess||"all")==="all"} onChange={e=>setEditUser(p=>({...p,projectAccess:e.target.checked?"all":[]}))}/>
+                    <b>כל הפרויקטים</b>
+                  </label>
+                  {(editUser.projectAccess||"all")!=="all"&&projects.map(proj=>{const pa=editUser.projectAccess;const sel=Array.isArray(pa)?pa.includes(proj.id):pa===proj.id;return(
+                    <label key={proj.id} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer",color:sel?text:muted,padding:"3px 0"}}>
+                      <input type="checkbox" style={{width:"auto"}} checked={sel} onChange={e=>{const cur=Array.isArray(pa)?pa:(pa&&pa!=="all"?[pa]:[]);setEditUser(p=>({...p,projectAccess:e.target.checked?[...cur,proj.id]:cur.filter(id=>id!==proj.id)}))}}/>
+                      {proj.name}
+                    </label>
+                  )})}
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10,marginBottom:12}}>
+              <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,cursor:"pointer",color:text}}><input type="checkbox" checked={editUser.canEdit||false} onChange={e=>setEditUser(p=>({...p,canEdit:e.target.checked}))} style={{width:"auto"}}/> הרשאת עריכה</label>
+              <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,cursor:"pointer",color:text}}><input type="checkbox" checked={editUser.canView!==false} onChange={e=>setEditUser(p=>({...p,canView:e.target.checked}))} style={{width:"auto"}}/> הרשאת צפייה</label>
+            </div>
+            <div style={{display:"flex",gap:8}}><Btn color="#10b981" onClick={saveUser}>✅ שמור</Btn><Btn onClick={()=>setEditUser(null)}>ביטול</Btn></div>
+          </div>
+        </div>
+      )}
+      {revertConfirm&&(
+        <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:card,borderRadius:14,padding:28,maxWidth:440,width:"100%",border:"1px solid #ef444455"}}>
+            <div style={{fontWeight:700,fontSize:17,color:"#ef4444",marginBottom:12}}>↩️ ביטול פעולה</div>
+            <div style={{fontSize:14,color:text,marginBottom:20}}>האם לבטל את הפעולה: <b>{revertConfirm.action}</b>?</div>
+            <div style={{display:"flex",gap:8}}><Btn color="#ef4444" onClick={()=>revertAction(revertConfirm)}>↩️ כן, בטל פעולה</Btn><Btn onClick={()=>setRevertConfirm(null)}>ביטול</Btn></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Navbar ─────────────────────────────────────────────────────────────────────
+const TABS=[{id:"dashboard",label:"📊 דאשבורד"},{id:"orders",label:'📋 פק"ע'},{id:"shortages",label:"⚠️ חוסרים"},{id:"defects",label:"🔧 תקלות"},{id:"projects",label:"🏗️ פרויקטים"},{id:"excel",label:"📂 Excel"}];
+function Navbar({tab,setTab,lightMode,toggleLight,sync,onAdmin,onCustomize,onLogout}){
+  const {currentUser}=useAuth();
+  const [menuOpen,setMenuOpen]=useState(false);
+  const lm=lightMode;
+  const navBg=lm?"#ffffff":"#1e2130";
+  const navBorder=lm?"#e2e8f0":"#2d3748";
+  const navMuted=lm?"#64748b":"#94a3b8";
+  const navActive=lm?"#2563eb":"#60a5fa";
+  const syncInfo={ok:{bg:lm?"#d1fae5":"#052e16",c:lm?"#059669":"#6ee7b7",t:"☁️ מסונכרן"},saving:{bg:lm?"#dbeafe":"#1e3a5f",c:lm?"#2563eb":"#93c5fd",t:"⏳ שומר..."},error:{bg:lm?"#fee2e2":"#450a0a",c:lm?"#dc2626":"#fca5a5",t:"❌ שגיאה"}}[sync]||{bg:"#1e3a5f",c:"#93c5fd",t:"..."};
+  return(
+    <div className="nav-wrapper" style={{background:navBg,borderBottom:`1px solid ${navBorder}`,position:"sticky",top:0,zIndex:50,transition:"background .3s"}}>
+      {/* Desktop nav */}
+      <div style={{maxWidth:1440,margin:"0 auto",padding:"0 16px",display:"flex",alignItems:"center",gap:8,height:52}}>
+        <div style={{fontWeight:800,fontSize:15,color:navActive,whiteSpace:"nowrap"}}>🏭 ניהול ייצור</div>
+        <div className="desk-nav" style={{flexWrap:"nowrap",overflowX:"auto",scrollbarWidth:"none"}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>{setTab(t.id);setMenuOpen(false)}} style={{padding:"0 14px",height:52,background:"none",border:"none",color:tab===t.id?navActive:navMuted,borderBottom:tab===t.id?`3px solid ${navActive}`:"3px solid transparent",fontWeight:tab===t.id?700:400,fontSize:13,whiteSpace:"nowrap",fontFamily:"inherit"}}>{t.label}</button>
+          ))}
+        </div>
+        <div style={{flex:1}}/>
+        <div className="hide-mobile" style={{display:"flex",gap:6,alignItems:"center"}}>
+          <div style={{fontSize:11,padding:"3px 9px",borderRadius:20,background:syncInfo.bg,color:syncInfo.c,whiteSpace:"nowrap"}}>{syncInfo.t}</div>
+          <button onClick={toggleLight} style={{background:lm?"#e2e8f0":"#131825",border:`1px solid ${navBorder}`,borderRadius:8,padding:"5px 12px",fontSize:13,color:navMuted,fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>{lm?"🌙":"☀️"} <span style={{fontSize:11}}>{lm?"כהה":"בהיר"}</span></button>
+          {currentUser?.role==="admin"&&<button onClick={onAdmin} style={{background:"#f59e0b22",border:"1px solid #f59e0b44",color:"#f59e0b",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>🛡️ ניהול</button>}
+          <button onClick={onCustomize} style={{background:lm?"#e2e8f0":"#1e2130",border:`1px solid ${navBorder}`,color:navMuted,borderRadius:8,padding:"5px 10px",fontSize:13,fontFamily:"inherit"}}>🎨</button>
+          <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",background:lm?"#e2e8f0":"#131825",borderRadius:8,border:`1px solid ${navBorder}`}}>
+            <span style={{fontSize:12,color:navActive,fontWeight:700}}>{currentUser?.name}</span>
+            <span style={{fontSize:11,color:navMuted}}>·</span>
+            <button onClick={onLogout} style={{background:"none",border:"none",color:"#ef4444",fontSize:12,padding:0,fontWeight:600,fontFamily:"inherit"}}>יציאה</button>
+          </div>
+        </div>
+        {/* Mobile right */}
+        <div className="show-mobile-only" style={{display:"flex",gap:6,alignItems:"center",marginRight:"auto"}}>
+          <div style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:syncInfo.bg,color:syncInfo.c}}>{sync==="ok"?"☁️":sync==="saving"?"⏳":"❌"}</div>
+          <button onClick={()=>setMenuOpen(p=>!p)} style={{background:"none",border:`1px solid ${navBorder}`,borderRadius:8,padding:"5px 10px",fontSize:18,color:navMuted,lineHeight:1}}>{menuOpen?"✕":"☰"}</button>
+        </div>
+      </div>
+      {/* Mobile tab row */}
+      <div className="mob-tabs" style={{borderTop:`1px solid ${navBorder}`,paddingBottom:"env(safe-area-inset-bottom,0px)"}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>{setTab(t.id);setMenuOpen(false)}} style={{flex:"0 0 auto",padding:"8px 12px",background:"none",border:"none",color:tab===t.id?navActive:navMuted,borderBottom:tab===t.id?`3px solid ${navActive}`:"3px solid transparent",fontWeight:tab===t.id?700:400,fontSize:12,fontFamily:"inherit",whiteSpace:"nowrap"}}>{t.label}</button>
+        ))}
+      </div>
+      {/* Mobile dropdown */}
+      {menuOpen&&(
+        <div style={{background:navBg,borderBottom:`1px solid ${navBorder}`,padding:"12px 16px",display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,paddingBottom:10,borderBottom:`1px solid ${navBorder}`}}>
+            <span style={{fontSize:13,color:navActive,fontWeight:700}}>👤 {currentUser?.name}</span>
+            <button onClick={()=>{onLogout();setMenuOpen(false)}} style={{marginRight:"auto",background:"#450a0a",color:"#fca5a5",border:"none",borderRadius:6,padding:"4px 10px",fontSize:12,fontFamily:"inherit"}}>יציאה</button>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={()=>{toggleLight();setMenuOpen(false)}} style={{background:lm?"#e2e8f0":"#131825",border:`1px solid ${navBorder}`,borderRadius:8,padding:"7px 14px",fontSize:13,color:navMuted,fontFamily:"inherit"}}>{lm?"🌙 כהה":"☀️ בהיר"}</button>
+            {currentUser?.role==="admin"&&<button onClick={()=>{onAdmin();setMenuOpen(false)}} style={{background:"#f59e0b22",border:"1px solid #f59e0b44",color:"#f59e0b",borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>🛡️ ניהול</button>}
+            <button onClick={()=>{onCustomize();setMenuOpen(false)}} style={{background:lm?"#e2e8f0":"#1e2130",border:`1px solid ${navBorder}`,color:navMuted,borderRadius:8,padding:"7px 14px",fontSize:13,fontFamily:"inherit"}}>🎨 עיצוב</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Dashboard ──────────────────────────────────────────────────────────────────
+function Dashboard({orders,projects}){
+  const [period,setPeriod]=useState("month");
+  const [selYear,setSelYear]=useState("all");
+  const [selProj,setSelProj]=useState("all");
+  const [donutSlice,setDonutSlice]=useState("status");
+  const [lineSlice,setLineSlice]=useState("rev_qty");
+  const [forecastOpen,setForecastOpen]=useState(true);
+  const allYears=useMemo(()=>[...new Set(orders.flatMap(o=>o.deliveries.map(d=>yrKey(d.date))).filter(Boolean))].sort().reverse(),[orders]);
+  const fOrders=useMemo(()=>orders.filter(o=>selProj==="all"||o.projectId===selProj),[orders,selProj]);
+  const fDeliveries=useMemo(()=>fOrders.flatMap(o=>o.deliveries.map(d=>({...d,unitPrice:Number(o.unitPrice||0)})).filter(d=>selYear==="all"||yrKey(d.date)===selYear)),[fOrders,selYear]);
+  const openO=fOrders.filter(o=>o.status!=="complete");
+  const totalQty=fOrders.reduce((s,o)=>s+Number(o.qty||0),0);
+  const totalSup=fOrders.reduce((s,o)=>s+o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0),0);
+  const totalRev=fDeliveries.reduce((s,d)=>s+Number(d.qty||0)*d.unitPrice,0);
+  const openSh=fOrders.flatMap(o=>o.shortages||[]).filter(s=>!s.received);
+  const blocked=fOrders.filter(o=>o.status!=="complete"&&(o.shortages||[]).some(s=>!s.received));
+  const openOrders=fOrders.filter(o=>o.status!=="complete");
+  const forecastByOrder=openOrders.map(o=>{const supplied=o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0);const remaining=Math.max(0,Number(o.qty||0)-supplied);const expectedRev=remaining*Number(o.unitPrice||0);const proj=projects.find(p=>p.id===o.projectId);return{...o,remaining,expectedRev,proj}}).filter(o=>o.expectedRev>0).sort((a,b)=>b.expectedRev-a.expectedRev);
+  const totalForecast=forecastByOrder.reduce((s,o)=>s+o.expectedRev,0);
+  const completedWithDates=orders.filter(o=>o.status==="complete"&&o.targetDate&&o.deliveries.length>0);
+  const delayArr=completedWithDates.map(o=>{const ld=o.deliveries.map(d=>d.date).filter(Boolean).sort().at(-1);return daysBetween(o.targetDate,ld)}).filter(v=>v!=null);
+  const avgDelay=delayArr.length?Math.round(delayArr.reduce((a,b)=>a+b,0)/delayArr.length):null;
+  const onTimeRate=delayArr.length?Math.round(delayArr.filter(d=>d<=0).length/delayArr.length*100):null;
+  const leads=orders.filter(o=>o.receivedDate&&o.deliveries.length>0).map(o=>{const fd=o.deliveries.map(d=>d.date).filter(Boolean).sort()[0];return daysBetween(o.receivedDate,fd)}).filter(v=>v!=null&&v>=0);
+  const avgLead=leads.length?Math.round(leads.reduce((a,b)=>a+b,0)/leads.length):null;
+  const rSh=orders.flatMap(o=>o.shortages||[]).filter(s=>s.received&&s.orderedDate&&s.receivedDate);
+  const avgShTime=rSh.length?Math.round(rSh.map(s=>daysBetween(s.orderedDate,s.receivedDate)).filter(v=>v!=null&&v>=0).reduce((a,b)=>a+b,0)/rSh.length):null;
+  const overdue=fOrders.filter(o=>o.targetDate&&o.status!=="complete"&&new Date(o.targetDate)<new Date()).map(o=>({...o,dl:daysBetween(o.targetDate,todays())})).sort((a,b)=>b.dl-a.dl).slice(0,5);
+  const keyFn=d=>period==="year"?yrKey(d):period==="quarter"?qKey(d):mkKey(d);
+  const pd={};fDeliveries.forEach(d=>{const k=keyFn(d.date);if(!k)return;if(!pd[k])pd[k]={qty:0,rev:0};pd[k].qty+=Number(d.qty||0);pd[k].rev+=Number(d.qty||0)*d.unitPrice});
+  const pKeys=Object.keys(pd).sort().slice(-10);
+  const pStats=projects.map(p=>{const po=fOrders.filter(o=>o.projectId===p.id);const qty=po.reduce((s,o)=>s+Number(o.qty||0),0);const sup=po.reduce((s,o)=>s+o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0),0);const rev=po.reduce((s,o)=>{const sp=o.deliveries.filter(d=>selYear==="all"||yrKey(d.date)===selYear).reduce((a,d)=>a+Number(d.qty||0),0);return s+sp*Number(o.unitPrice||0)},0);return{...p,qty,sup,rev}});
+  let donutData=[];
+  if(donutSlice==="status"){const cnt={open:0,partial:0,complete:0,blocked:0};fOrders.forEach(o=>{cnt[o.status]=(cnt[o.status]||0)+1});donutData=[{label:"פתוחות",value:cnt.open||0},{label:"חלקיות",value:cnt.partial||0},{label:"הושלמו",value:cnt.complete||0},{label:"תקועות",value:cnt.blocked||0}].filter(d=>d.value>0)}
+  else if(donutSlice==="project"){donutData=projects.map(p=>{const rev=fOrders.filter(o=>o.projectId===p.id).reduce((s,o)=>{const sp=o.deliveries.filter(d=>selYear==="all"||yrKey(d.date)===selYear).reduce((a,d)=>a+Number(d.qty||0),0);return s+sp*Number(o.unitPrice||0)},0);return{label:p.name,value:rev}}).filter(d=>d.value>0)}
+  else{donutData=projects.map(p=>{const sup=fOrders.filter(o=>o.projectId===p.id).reduce((s,o)=>s+o.deliveries.filter(d=>selYear==="all"||yrKey(d.date)===selYear).reduce((a,d)=>a+Number(d.qty||0),0),0);return{label:p.name,value:sup}}).filter(d=>d.value>0)}
+  const allLineKeys=[...new Set(fOrders.flatMap(o=>o.deliveries.filter(d=>selYear==="all"||yrKey(d.date)===selYear).map(d=>keyFn(d.date)).filter(Boolean)))].sort().slice(-10);
+  let lineData=[],lineColor="#10b981",lineColor2=null,lineLabel="הכנסות",lineLabel2="";
+  if(lineSlice==="rev_qty"){lineColor="#10b981";lineColor2="#3b82f6";lineLabel="הכנסות";lineLabel2="כמויות";lineData=allLineKeys.map(k=>{let rev=0,qty=0;fOrders.forEach(o=>o.deliveries.forEach(d=>{if(keyFn(d.date)!==k||(selYear!=="all"&&yrKey(d.date)!==selYear))return;qty+=Number(d.qty||0);rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));return{label:k,v1:rev,v2:qty}})}
+  else if(lineSlice==="per_proj"){const pList=projects.filter(p=>fOrders.some(o=>o.projectId===p.id)).slice(0,2);lineColor=COLORS[0];lineColor2=pList.length>=2?COLORS[1]:null;lineLabel=pList[0]?pList[0].name:"";lineLabel2=pList[1]?pList[1].name:"";const getR=(pid,k)=>{let rev=0;fOrders.filter(o=>o.projectId===pid).forEach(o=>o.deliveries.forEach(d=>{if(keyFn(d.date)!==k||(selYear!=="all"&&yrKey(d.date)!==selYear))return;rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));return rev};lineData=allLineKeys.map(k=>({label:k,v1:pList[0]?getR(pList[0].id,k):0,v2:pList[1]?getR(pList[1].id,k):0}))}
+  else{lineColor="#f59e0b";lineColor2=null;lineLabel="מצטבר";let cum=0;lineData=allLineKeys.map(k=>{let rev=0;fOrders.forEach(o=>o.deliveries.forEach(d=>{if(keyFn(d.date)!==k||(selYear!=="all"&&yrKey(d.date)!==selYear))return;rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));cum+=rev;return{label:k,v1:cum,v2:0}})}
+  return(
+    <div>
+      <div className="dash-filter-sticky" style={{position:"sticky",zIndex:40,background:"var(--c-bg)",paddingTop:8,paddingBottom:4,marginBottom:8}}>
+        <Card style={{padding:"10px 14px",display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end",boxShadow:"0 2px 8px #0003"}}>
+          <span style={{fontSize:13,color:"var(--c-dim)",fontWeight:600,paddingBottom:2}}>🔍</span>
+          <div style={{display:"flex",flexDirection:"column",gap:3,minWidth:140}}><label style={{fontSize:11,color:"var(--c-dim)"}}>פרויקט</label><select value={selProj} onChange={e=>setSelProj(e.target.value)} style={{padding:"5px 8px",fontSize:12}}><option value="all">כל הפרויקטים</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"var(--c-dim)"}}>שנה</label><select value={selYear} onChange={e=>setSelYear(e.target.value)} style={{padding:"5px 8px",fontSize:12}}><option value="all">כל השנים</option>{allYears.map(y=><option key={y} value={y}>{y}</option>)}</select></div>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"var(--c-dim)"}}>תקופה</label><SegBtn options={[["month","חודשי"],["quarter","רבעוני"],["year","שנתי"]]} value={period} onChange={setPeriod}/></div>
+          {(selProj!=="all"||selYear!=="all")&&<button onClick={()=>{setSelProj("all");setSelYear("all")}} style={{background:"#374151",color:"#e2e8f0",border:"none",borderRadius:6,padding:"5px 10px",fontSize:12,fontFamily:"inherit"}}>✕ נקה</button>}
+        </Card>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:9,marginBottom:14}}>
+        <KpiBox i="📋" v={openO.length} label='פק"ע פתוחות' c="#f59e0b"/>
+        <KpiBox i="🔢" v={totalQty.toLocaleString()} label='סה"כ פריטים' c="#60a5fa"/>
+        <KpiBox i="✅" v={totalSup.toLocaleString()} label="סופק עד כה" c="#10b981"/>
+        <KpiBox i="💰" v={fmtMoney(totalRev)} label="הכנסות" c="#a78bfa" sub={selYear!=="all"?selYear:""}/>
+        <KpiBox i="🔮" v={fmtMoney(totalForecast)} label="צפי הכנסות" c="#06b6d4"/>
+        <KpiBox i="⚠️" v={openSh.length} label="חוסרים פתוחים" c="#ef4444"/>
+        <KpiBox i="🚧" v={blocked.length} label="תקועות" c="#f97316"/>
+      </div>
+      {forecastByOrder.length>0&&(
+        <Card style={{marginBottom:14,border:"1px solid #06b6d433"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}} onClick={()=>setForecastOpen(p=>!p)}>
+            <div style={{fontWeight:700,fontSize:14,color:"#22d3ee",display:"flex",alignItems:"center",gap:8}}>🔮 צפי הכנסות מפקעות פתוחות<span style={{fontSize:12,background:"#06b6d422",color:"#22d3ee",padding:"2px 8px",borderRadius:12}}>{forecastByOrder.length}</span></div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{fontSize:12,color:"#94a3b8"}}>סה"כ: <b style={{color:"#22d3ee"}}>{fmtMoney(totalForecast)}</b></div><span style={{fontSize:16,color:"#22d3ee",transition:"transform .25s",transform:forecastOpen?"rotate(0deg)":"rotate(180deg)",display:"inline-block"}}>▲</span></div>
+          </div>
+          {forecastOpen&&(<div style={{marginTop:12,display:"flex",flexDirection:"column",gap:6}}>
+            {forecastByOrder.slice(0,8).map(o=>{const pct=totalForecast>0?Math.round(o.expectedRev/totalForecast*100):0;const isBlocked=(o.shortages||[]).some(s=>!s.received);const isOverdue=o.targetDate&&new Date(o.targetDate)<new Date();return(
+              <div key={o.id} style={{background:"var(--c-deep)",borderRadius:8,padding:"10px 12px",border:`1px solid ${isBlocked?"#ef444433":isOverdue?"#f59e0b33":"#06b6d433"}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,flexWrap:"wrap",gap:6}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <span style={{fontWeight:700,color:"#60a5fa",fontSize:13}}>{o.woNumber}</span>
+                    {o.proj&&<span style={{fontSize:11,background:"var(--c-tag-blue-bg)",color:"var(--c-tag-blue)",padding:"2px 7px",borderRadius:20}}>{o.proj.name}</span>}
+                    {isBlocked&&<span style={{fontSize:11,background:"#450a0a",color:"#fca5a5",padding:"2px 7px",borderRadius:20}}>🚧 תקועה</span>}
+                    {isOverdue&&!isBlocked&&<span style={{fontSize:11,background:"#451a03",color:"#fbbf24",padding:"2px 7px",borderRadius:20}}>🚨 באיחור</span>}
+                  </div>
+                  <span style={{fontWeight:700,color:"#22d3ee",fontSize:14}}>{fmtMoney(o.expectedRev)}</span>
+                </div>
+                <div style={{display:"flex",gap:10,fontSize:11,color:"#64748b",marginBottom:4,flexWrap:"wrap"}}>
+                  <span>יתרה: <b style={{color:"#e2e8f0"}}>{o.remaining.toLocaleString()} יח'</b></span>
+                  <span>מחיר: <b style={{color:"#a78bfa"}}>{fmtMoney(o.unitPrice)}</b></span>
+                  {o.targetDate&&<span>יעד: <b style={{color:isOverdue?"#ef4444":"#e2e8f0"}}>{fmt(o.targetDate)}</b></span>}
+                </div>
+                <div style={{height:4,background:"var(--c-border)",borderRadius:2,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:"#06b6d4",borderRadius:2}}/></div>
+              </div>
+            )})}
+            {forecastByOrder.length>8&&<div style={{fontSize:12,color:"#64748b",textAlign:"center",padding:"4px 0"}}>ועוד {forecastByOrder.length-8} פק"ע...</div>}
+          </div>)}
+        </Card>
+      )}
+      <div style={{marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:12,marginBottom:8,color:"var(--c-dim)"}}>💡 תובנות תפעוליות</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8}}>
+          <Tile icon="⏱️" label="הזמנה→אספקה" value={avgLead!=null?avgLead+" ימים":"—"} color="#60a5fa" sub={leads.length?`${leads.length} פק"ע`:""}/>
+          <Tile icon="🎯" label="עמידה ביעד" value={onTimeRate!=null?onTimeRate+"%":"—"} color={onTimeRate!=null&&onTimeRate<70?"#ef4444":"#10b981"} warn={onTimeRate!=null&&onTimeRate<70} sub={delayArr.length?`מתוך ${delayArr.length}`:""}/>
+          <Tile icon="📅" label="עיכוב ממוצע" value={avgDelay!=null?(avgDelay>0?"+"+avgDelay:String(avgDelay))+" ימים":"—"} color={avgDelay!=null&&avgDelay>7?"#ef4444":avgDelay!=null&&avgDelay>0?"#f59e0b":"#10b981"} warn={avgDelay!=null&&avgDelay>7}/>
+          <Tile icon="🔧" label="פתרון חוסר" value={avgShTime!=null?avgShTime+" ימים":"—"} color={avgShTime!=null&&avgShTime>14?"#ef4444":"#a78bfa"} warn={avgShTime!=null&&avgShTime>14}/>
+          <Tile icon="🚨" label='פק"ע באיחור' value={overdue.length} color={overdue.length>0?"#ef4444":"#10b981"} warn={overdue.length>0}/>
+          <Tile icon="📊" label="אחוז ניצול" value={totalQty?Math.round(totalSup/totalQty*100)+"%":"—"} color="#60a5fa" sub={`${totalSup.toLocaleString()}/${totalQty.toLocaleString()}`}/>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(0,1fr)",gap:12,marginBottom:12}} className="chart-grid-2col">
+        <Card><div style={{fontWeight:700,fontSize:14,marginBottom:12}}>💰 הכנסות לפי תקופה</div><BarChart data={pKeys.map(k=>({label:k,value:pd[k].rev}))} color="#a78bfa" formatVal={v=>fmtMoney(v)} height={130}/></Card>
+        <Card style={{display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div style={{fontWeight:700,fontSize:14}}>📊 התפלגות</div><select value={donutSlice} onChange={e=>setDonutSlice(e.target.value)} style={{padding:"3px 6px",fontSize:11,width:"auto"}}><option value="status">סטטוס</option><option value="project">הכנסות</option><option value="qty">כמויות</option></select></div>
+          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}><DonutChart data={donutData} size={170}/></div>
+        </Card>
+      </div>
+      <Card style={{marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{fontWeight:700,fontSize:14}}>📈 ניתוח מגמות</div>
+          <SegBtn options={[["rev_qty","הכנסות+כמויות"],["per_proj","פרויקטים"],["cumulative","מצטבר"]]} value={lineSlice} onChange={setLineSlice}/>
+        </div>
+        <LineChart data={lineData} color={lineColor} color2={lineColor2} label={lineLabel} label2={lineLabel2} formatVal={v=>fmtMoney(v)} height={130}/>
+      </Card>
+      <Card style={{marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><div style={{fontWeight:700,fontSize:14}}>📦 כמויות שסופקו</div><div style={{fontSize:12,color:"#94a3b8"}}>סה"כ: <b style={{color:"#3b82f6"}}>{pKeys.reduce((s,k)=>s+pd[k].qty,0).toLocaleString()}</b></div></div>
+        <BarChart data={pKeys.map(k=>({label:k,value:pd[k].qty}))} color="#3b82f6" formatVal={v=>v.toLocaleString()} height={100}/>
+      </Card>
+      <Card style={{marginBottom:12}}>
+        <div style={{fontWeight:700,marginBottom:14,fontSize:14}}>🏗️ התקדמות לפי פרויקט</div>
+        {pStats.filter(p=>p.qty>0).length===0?<div style={{color:"#64748b",textAlign:"center",padding:"20px 0"}}>אין נתונים</div>:(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:12}}>
+            {pStats.filter(p=>p.qty>0).map((p,i)=>{const pct=p.qty?Math.min(100,Math.round(p.sup/p.qty*100)):0,c=COLORS[i%COLORS.length];return(
+              <div key={p.id} style={{background:"var(--c-deep)",borderRadius:10,padding:"12px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><div style={{display:"flex",alignItems:"center",gap:7}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontWeight:600,fontSize:13}}>{p.name}</span></div><span style={{fontSize:14,fontWeight:800,color:c}}>{pct}%</span></div>
+                <div style={{height:7,background:"var(--c-border)",borderRadius:4,overflow:"hidden",marginBottom:6}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${c}66,${c})`,borderRadius:4,transition:"width .6s"}}/></div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#64748b"}}><span>{p.sup.toLocaleString()} / {p.qty.toLocaleString()} יח'</span><span style={{color:"#a78bfa",fontWeight:600}}>{fmtMoney(p.rev)}</span></div>
+              </div>
+            )})}
+          </div>
+        )}
+      </Card>
+      {(overdue.length>0||blocked.length>0)&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
+          {overdue.length>0&&<Card style={{border:"1px solid #ef444433"}}><div style={{fontWeight:700,marginBottom:8,fontSize:13,color:"#ef4444"}}>🚨 עברו יעד אספקה</div><div style={{display:"flex",flexDirection:"column",gap:5}}>{overdue.map(o=><div key={o.id} style={{background:"var(--c-deep)",borderRadius:7,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><span style={{fontWeight:700,color:"#f97316",fontSize:13}}>{o.woNumber}</span><span style={{color:"#94a3b8",marginRight:8,fontSize:12}}>{o.description}</span></div><span style={{fontSize:12,color:"#ef4444",background:"#450a0a",padding:"2px 8px",borderRadius:10,whiteSpace:"nowrap"}}>+{o.dl} ימים</span></div>)}</div></Card>}
+          {blocked.length>0&&<Card style={{border:"1px solid #f9731633"}}><div style={{fontWeight:700,marginBottom:8,fontSize:13,color:"#f97316"}}>🚧 תקועות בחוסרים</div><div style={{display:"flex",flexDirection:"column",gap:5}}>{blocked.slice(0,5).map(o=>{const c=(o.shortages||[]).filter(s=>!s.received).length;return<div key={o.id} style={{background:"var(--c-deep)",borderRadius:7,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><span style={{fontWeight:700,color:"#f97316",fontSize:13}}>{o.woNumber}</span><span style={{color:"#94a3b8",marginRight:8,fontSize:12}}>{o.description}</span></div><span style={{fontSize:12,color:"#ef4444"}}>{c} חוסר{c>1?"ים":""}</span></div>})}</div></Card>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Orders ─────────────────────────────────────────────────────────────────────
+function OrderForm({initial,projects,onSave,onClose}){
+  const [f,setF]=useState({woNumber:initial?.woNumber||"",description:initial?.description||"",qty:initial?.qty||"",unitPrice:initial?.unitPrice||"",projectId:initial?.projectId||"",receivedDate:initial?.receivedDate||todays(),targetDate:initial?.targetDate||""});
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  return(
+    <div>
+      <h3 style={{margin:"0 0 16px",fontSize:18}}>{initial?'עריכת פק"ע':'פק"ע חדשה'}</h3>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:12}}>
+        <Field label='מספר פק"ע *' value={f.woNumber} onChange={v=>s("woNumber",v)}/>
+        <Field label="תיאור" value={f.description} onChange={v=>s("description",v)}/>
+        <Field label="כמות *" type="number" value={f.qty} onChange={v=>s("qty",v)}/>
+        <Field label="מחיר ליחידה (₪)" type="number" value={f.unitPrice} onChange={v=>s("unitPrice",v)}/>
+        <div style={{display:"flex",flexDirection:"column",gap:4}}><label style={{fontSize:12,color:"var(--c-dim)",fontWeight:600}}>פרויקט</label><select value={f.projectId} onChange={e=>s("projectId",e.target.value)}><option value="">-- בחר פרויקט --</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+        <Field label="תאריך קבלה" type="date" value={f.receivedDate} onChange={v=>s("receivedDate",v)}/>
+        <Field label="יעד אספקה" type="date" value={f.targetDate} onChange={v=>s("targetDate",v)}/>
+      </div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:16}}><Btn onClick={onClose}>ביטול</Btn><Btn color="#10b981" onClick={()=>{if(!f.woNumber||!f.qty)return alert('יש למלא מספר פק"ע וכמות');onSave(f)}}>שמור</Btn></div>
+    </div>
+  );
+}
+
+function OrderDetail({order,projects,onClose,onUpdate}){
+  const {canEdit}=useAuth();
+  const [showDel,setShowDel]=useState(false);
+  const [showSh,setShowSh]=useState(false);
+  const [showDef,setShowDef]=useState(false);
+  const [df,setDf]=useState({qty:"",date:todays(),note:""});
+  const [sf,setSf]=useState({item:"",sku:"",missing:"",reason:"",responsible:"",orderedDate:todays(),note:""});
+  const [deff,setDeff]=useState({title:"",type:"quality",severity:"medium",description:"",responsible:"",discoveredDate:todays(),status:"open"});
+  const [partialModal,setPartialModal]=useState(null);
+  const [partialQty,setPartialQty]=useState("");
+  const [editShModal,setEditShModal]=useState(null);
+  const proj=projects.find(p=>p.id===order.projectId);
+  const totalSup=order.deliveries.reduce((a,d)=>a+Number(d.qty||0),0);
+  const pct=order.qty?Math.min(100,Math.round(totalSup/Number(order.qty)*100)):0;
+  const rev=totalSup*Number(order.unitPrice||0);
+  const overdueDays=order.targetDate&&order.status!=="complete"&&new Date(order.targetDate)<new Date()?daysBetween(order.targetDate,todays()):null;
+  const lastDel=order.deliveries.map(d=>d.date).filter(Boolean).sort().at(-1);
+  const leadTime=order.receivedDate&&order.deliveries.length>0?daysBetween(order.receivedDate,order.deliveries.map(d=>d.date).filter(Boolean).sort()[0]):null;
+  const delayFromTarget=order.targetDate&&lastDel?daysBetween(order.targetDate,lastDel):null;
+  const upd=(o,action,oid)=>{const u={...o,status:calcStatus(o)};onUpdate(u,action,oid);return u};
+  const addDel=()=>{if(!df.qty)return;upd({...order,deliveries:[...order.deliveries,{id:uid(),...df}]},`הוספת אספקה: ${df.qty} יח' בתאריך ${df.date}`,order.id);setDf({qty:"",date:todays(),note:""});setShowDel(false)};
+  const remDel=id=>{upd({...order,deliveries:order.deliveries.filter(del=>del.id!==id)},`מחיקת אספקה`,order.id)};
+  const addSh=()=>{if(!sf.item)return;upd({...order,shortages:[...(order.shortages||[]),{id:uid(),...sf,received:false,receivedDate:null,receivedQty:0}]},`הוספת חוסר: ${sf.item}`,order.id);setSf({item:"",sku:"",missing:"",reason:"",responsible:"",orderedDate:todays(),note:""});setShowSh(false)};
+  const saveEditSh=()=>{if(!editShModal)return;upd({...order,shortages:order.shortages.map(s=>s.id===editShModal.id?{...s,...editShModal}:s)},`עריכת חוסר`,order.id);setEditShModal(null)};
+  const markRec=id=>{const s=order.shortages.find(sh=>sh.id===id);upd({...order,shortages:order.shortages.map(sh=>sh.id===id?{...sh,received:true,receivedDate:todays(),receivedQty:Number(sh.missing||0)}:sh)},`סימון חוסר כהתקבל: ${s?.item||""}`,order.id)};
+  const markRecPartial=(id,qty)=>{upd({...order,shortages:order.shortages.map(sh=>{if(sh.id!==id)return sh;const nq=Number(sh.receivedQty||0)+Number(qty),tot=Number(sh.missing||0);return{...sh,receivedQty:nq,received:tot>0&&nq>=tot,receivedDate:todays()}})},`קבלה חלקית`,order.id);setPartialModal(null);setPartialQty("")};
+  const remSh=id=>{upd({...order,shortages:(order.shortages||[]).filter(sh=>sh.id!==id)},`מחיקת חוסר`,order.id)};
+  const addDef=()=>{if(!deff.title)return;upd({...order,defects:[...(order.defects||[]),{id:uid(),...deff}]},`הוספת תקלה: ${deff.title}`,order.id);setDeff({title:"",type:"quality",severity:"medium",description:"",responsible:"",discoveredDate:todays(),status:"open"});setShowDef(false)};
+  const remDef=id=>{upd({...order,defects:(order.defects||[]).filter(df=>df.id!==id)},`מחיקת תקלה`,order.id)};
+  const closeDef=id=>{upd({...order,defects:(order.defects||[]).map(df=>df.id===id?{...df,status:"closed",closedDate:todays()}:df)},`סגירת תקלה`,order.id)};
+  const sevColor={low:"#10b981",medium:"#f59e0b",high:"#ef4444",critical:"#dc2626"};
+  const typeLabel={quality:"איכות",process:"תהליך",material:"חומר גלם",equipment:"ציוד",human:"גורם אנושי",other:"אחר"};
+  return(
+    <div>
+      <Btn onClick={onClose} style={{marginBottom:12}}>← חזרה</Btn>
+      <Card style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
+          <div><h2 style={{margin:"0 0 3px",color:"#60a5fa"}}>{order.woNumber}</h2><div style={{color:"#94a3b8"}}>{order.description}</div>{proj&&<div style={{marginTop:3,fontSize:13,color:"#93c5fd"}}>📂 {proj.name}</div>}</div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}><Badge status={order.status} large/>{overdueDays!=null&&<span style={{fontSize:12,background:"#450a0a",color:"#ef4444",padding:"4px 10px",borderRadius:20}}>🚨 {overdueDays} ימים באיחור</span>}</div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:8,marginTop:10}}>
+          {[["כמות",Number(order.qty||0).toLocaleString()],["סופק",totalSup.toLocaleString()],["יתרה",(Number(order.qty||0)-totalSup).toLocaleString()],["מחיר ליחידה",fmtMoney(order.unitPrice)],["הכנסה ממומשת",fmtMoney(rev)],["תאריך קבלה",fmt(order.receivedDate)],["יעד אספקה",fmt(order.targetDate)],["הזמנה→אספקה",leadTime!=null?leadTime+" ימים":"—"],["עיכוב מהיעד",delayFromTarget!=null?(delayFromTarget>0?"+"+delayFromTarget:delayFromTarget)+" ימים":"—"]].map(([l,v])=>(
+            <div key={l} style={{background:"var(--c-deep)",borderRadius:8,padding:"8px 10px"}}><div style={{fontSize:10,color:"#64748b",marginBottom:2}}>{l}</div><div style={{fontWeight:700,fontSize:12,wordBreak:"break-word"}}>{v}</div></div>
+          ))}
+        </div>
+        <div style={{marginTop:12}}><div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:"#94a3b8",marginBottom:3}}><span>התקדמות</span><span>{pct}%</span></div><PBar pct={pct} h={10}/></div>
+      </Card>
+      <Card style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><h3 style={{margin:0,fontSize:15}}>📦 אספקות</h3>{canEdit&&<Btn color="#3b82f6" onClick={()=>setShowDel(p=>!p)} style={{fontSize:13,padding:"7px 14px"}}>+ הוסף</Btn>}</div>
+        {showDel&&(<div style={{background:"var(--c-deep)",borderRadius:8,padding:12,marginBottom:10,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}><Field label="כמות *" type="number" value={df.qty} onChange={v=>setDf(p=>({...p,qty:v}))}/><Field label="תאריך" type="date" value={df.date} onChange={v=>setDf(p=>({...p,date:v}))}/><Field label="הערה" value={df.note} onChange={v=>setDf(p=>({...p,note:v}))}/><Btn color="#10b981" onClick={addDel}>שמור</Btn><Btn onClick={()=>setShowDel(false)}>ביטול</Btn></div>)}
+        {order.deliveries.length===0?<div style={{color:"#64748b",textAlign:"center",padding:16}}>אין אספקות עדיין</div>:(
+          <div style={{overflowX:"auto"}}><table><thead><tr><th>תאריך</th><th>כמות</th><th>הכנסה</th><th>הערה</th>{canEdit&&<th></th>}</tr></thead><tbody>{order.deliveries.map(d=>(<tr key={d.id}><td>{fmt(d.date)}</td><td style={{color:"#10b981",fontWeight:700}}>{Number(d.qty).toLocaleString()}</td><td style={{color:"#a78bfa"}}>{fmtMoney(Number(d.qty)*Number(order.unitPrice||0))}</td><td style={{color:"#94a3b8"}}>{d.note||"—"}</td>{canEdit&&<td><IBtn onClick={()=>remDel(d.id)}>🗑️</IBtn></td>}</tr>))}</tbody></table></div>
+        )}
+      </Card>
+      <Card style={{marginBottom:14,border:"1px solid #ef444433"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><h3 style={{margin:0,fontSize:15,color:"#f87171"}}>⚠️ חוסרים בזוודים</h3>{canEdit&&<Btn color="#ef4444" onClick={()=>setShowSh(p=>!p)} style={{fontSize:13,padding:"7px 14px"}}>+ הוסף</Btn>}</div>
+        {showSh&&(<div style={{background:"var(--c-deep)",borderRadius:8,padding:12,marginBottom:10,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}><Field label="תיאור פריט חסר *" value={sf.item} onChange={v=>setSf(p=>({...p,item:v}))} style={{minWidth:180}}/><Field label='מק"ט' value={sf.sku} onChange={v=>setSf(p=>({...p,sku:v}))}/><Field label="כמות" type="number" value={sf.missing} onChange={v=>setSf(p=>({...p,missing:v}))}/><Field label="סיבת חוסר" value={sf.reason} onChange={v=>setSf(p=>({...p,reason:v}))}/><Field label="אחראי" value={sf.responsible} onChange={v=>setSf(p=>({...p,responsible:v}))}/><Field label="תאריך הזמנה" type="date" value={sf.orderedDate} onChange={v=>setSf(p=>({...p,orderedDate:v}))}/><Field label="הערה" value={sf.note} onChange={v=>setSf(p=>({...p,note:v}))}/><Btn color="#ef4444" onClick={addSh}>שמור</Btn><Btn onClick={()=>setShowSh(false)}>ביטול</Btn></div>)}
+        {(order.shortages||[]).length===0?<div style={{color:"#64748b",textAlign:"center",padding:16}}>אין חוסרים</div>:(
+          <div style={{overflowX:"auto"}}><table><thead><tr><th>פריט</th><th>מק"ט</th><th>כמות</th><th>התקבל</th><th>אחראי</th><th>הוזמן</th><th>סטטוס</th>{canEdit&&<th></th>}</tr></thead><tbody>{order.shortages.map(s=>{const rq=Number(s.receivedQty||0),tot=Number(s.missing||0),isPar=rq>0&&!s.received;return(<tr key={s.id} style={{opacity:s.received?.6:1}}><td style={{fontWeight:600}}>{s.item}</td><td style={{color:"#93c5fd",fontSize:12}}>{s.sku||"—"}</td><td>{tot||"—"}</td><td style={{color:s.received?"#10b981":isPar?"#f59e0b":"#64748b",fontWeight:600}}>{s.received?tot:isPar?`${rq}/${tot}`:"—"}</td><td style={{color:"#a78bfa",fontSize:12}}>{s.responsible||"—"}</td><td>{fmt(s.orderedDate)}</td><td>{s.received?<span style={{color:"#10b981",fontSize:12}}>✅</span>:isPar?<span style={{color:"#f59e0b",fontSize:12}}>📦</span>:<span style={{color:"#ef4444",fontSize:12}}>❌</span>}</td>{canEdit&&<td><div style={{display:"flex",gap:2}}>{!s.received&&<><IBtn onClick={()=>{setPartialModal(s.id);setPartialQty("")}} title="קבלה חלקית">📦</IBtn><IBtn onClick={()=>markRec(s.id)} title="הושלם">✅</IBtn></>}<IBtn onClick={()=>setEditShModal({...s})}>✏️</IBtn><IBtn onClick={()=>remSh(s.id)}>🗑️</IBtn></div></td>}</tr>)})}</tbody></table></div>
+        )}
+        {partialModal&&(<div onClick={()=>setPartialModal(null)} style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:24,minWidth:280,border:"1px solid var(--c-border2)"}}><div style={{fontWeight:700,fontSize:16,marginBottom:12,color:"#f59e0b"}}>📦 רישום קבלה חלקית</div><div style={{fontSize:13,color:"#94a3b8",marginBottom:12}}>{order.shortages.find(s=>s.id===partialModal)?.item}</div><Field label="כמות שהתקבלה עכשיו" type="number" value={partialQty} onChange={setPartialQty}/><div style={{display:"flex",gap:8,marginTop:14}}><Btn color="#f59e0b" onClick={()=>partialQty&&markRecPartial(partialModal,partialQty)}>שמור קבלה</Btn><Btn onClick={()=>setPartialModal(null)}>ביטול</Btn></div></div></div>)}
+        {editShModal&&(<div onClick={()=>setEditShModal(null)} style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:14,padding:24,maxWidth:600,width:"100%",border:"1px solid #ef444455"}}><div style={{fontWeight:700,fontSize:16,marginBottom:14,color:"#f87171"}}>✏️ עריכת חוסר</div><div style={{display:"flex",flexDirection:"column",gap:10}}><Field label="תיאור *" value={editShModal.item} onChange={v=>setEditShModal(p=>({...p,item:v}))}/><div style={{display:"flex",gap:10,flexWrap:"wrap"}}><Field label='מק"ט' value={editShModal.sku||""} onChange={v=>setEditShModal(p=>({...p,sku:v}))}/><Field label="כמות" type="number" value={editShModal.missing||""} onChange={v=>setEditShModal(p=>({...p,missing:v}))}/></div><div style={{display:"flex",gap:10,flexWrap:"wrap"}}><Field label="סיבת חוסר" value={editShModal.reason||""} onChange={v=>setEditShModal(p=>({...p,reason:v}))}/><Field label="אחראי" value={editShModal.responsible||""} onChange={v=>setEditShModal(p=>({...p,responsible:v}))}/></div><div style={{display:"flex",gap:10,flexWrap:"wrap"}}><Field label="תאריך הזמנה" type="date" value={editShModal.orderedDate||""} onChange={v=>setEditShModal(p=>({...p,orderedDate:v}))}/><Field label="הערה" value={editShModal.note||""} onChange={v=>setEditShModal(p=>({...p,note:v}))}/></div></div><div style={{display:"flex",gap:8,marginTop:16}}><Btn color="#10b981" onClick={saveEditSh}>✅ שמור</Btn><Btn onClick={()=>setEditShModal(null)}>ביטול</Btn></div></div></div>)}
+      </Card>
+      <Card style={{border:"1px solid #f9731633"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><h3 style={{margin:0,fontSize:15,color:"#fb923c"}}>🔧 תקלות בתהליך הייצור</h3>{canEdit&&<Btn color="#f97316" onClick={()=>setShowDef(p=>!p)} style={{fontSize:13,padding:"7px 14px"}}>+ הוסף</Btn>}</div>
+        {showDef&&(<div style={{background:"var(--c-deep)",borderRadius:8,padding:12,marginBottom:10,border:"1px solid #f9731633"}}><div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}><Field label="כותרת תקלה *" value={deff.title} onChange={v=>setDeff(p=>({...p,title:v}))} style={{minWidth:180}}/><div style={{display:"flex",flexDirection:"column",gap:4,minWidth:120}}><label style={{fontSize:12,color:"var(--c-dim)",fontWeight:600}}>סוג תקלה</label><select value={deff.type} onChange={e=>setDeff(p=>({...p,type:e.target.value}))}><option value="quality">איכות</option><option value="process">תהליך</option><option value="material">חומר גלם</option><option value="equipment">ציוד</option><option value="human">גורם אנושי</option><option value="other">אחר</option></select></div><div style={{display:"flex",flexDirection:"column",gap:4,minWidth:110}}><label style={{fontSize:12,color:"var(--c-dim)",fontWeight:600}}>חומרה</label><select value={deff.severity} onChange={e=>setDeff(p=>({...p,severity:e.target.value}))}><option value="low">נמוכה</option><option value="medium">בינונית</option><option value="high">גבוהה</option><option value="critical">קריטית</option></select></div><Field label="אחראי" value={deff.responsible} onChange={v=>setDeff(p=>({...p,responsible:v}))}/><Field label="תאריך גילוי" type="date" value={deff.discoveredDate} onChange={v=>setDeff(p=>({...p,discoveredDate:v}))}/><Field label="תיאור" value={deff.description} onChange={v=>setDeff(p=>({...p,description:v}))} style={{minWidth:200}}/><Btn color="#f97316" onClick={addDef}>שמור</Btn><Btn onClick={()=>setShowDef(false)}>ביטול</Btn></div></div>)}
+        {(order.defects||[]).length===0?<div style={{color:"#64748b",textAlign:"center",padding:16}}>אין תקלות רשומות</div>:(
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>{(order.defects||[]).map(d=>{const sc=sevColor[d.severity]||"#94a3b8";return(<div key={d.id} style={{background:"var(--c-deep)",borderRadius:8,padding:"10px 14px",border:`1px solid ${d.status==="closed"?"#10b98133":sc+"44"}`,opacity:d.status==="closed"?.65:1}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}><div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}><span style={{fontWeight:700,fontSize:13}}>{d.title}</span><span style={{fontSize:11,background:sc+"22",color:sc,padding:"2px 8px",borderRadius:12,border:`1px solid ${sc}44`}}>{d.severity==="critical"?"🔴 קריטית":d.severity==="high"?"🟠 גבוהה":d.severity==="medium"?"🟡 בינונית":"🟢 נמוכה"}</span><span style={{fontSize:11,background:"var(--c-card)",color:"#93c5fd",padding:"2px 8px",borderRadius:12}}>{typeLabel[d.type]||d.type}</span>{d.status==="closed"&&<span style={{fontSize:11,background:"#052e16",color:"#6ee7b7",padding:"2px 8px",borderRadius:12}}>✅ נסגרה</span>}</div>{d.description&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:3}}>{d.description}</div>}<div style={{fontSize:11,color:"#64748b",display:"flex",gap:10,flexWrap:"wrap"}}>{d.discoveredDate&&<span>גולה: {fmt(d.discoveredDate)}</span>}{d.responsible&&<span style={{color:"#a78bfa"}}>אחראי: {d.responsible}</span>}</div></div>{canEdit&&<div style={{display:"flex",gap:4}}>{d.status!=="closed"&&<IBtn onClick={()=>closeDef(d.id)} title="סגור תקלה">✅</IBtn>}<IBtn onClick={()=>remDef(d.id)}>🗑️</IBtn></div>}</div></div>)})}</div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function Orders({orders,projects,updO}){
+  const {canEdit}=useAuth();
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [detail,setDetail]=useState(null);
+  const [filterStatus,setFilterStatus]=useState("all");
+  const [filterProj,setFilterProj]=useState("all");
+  const [search,setSearch]=useState("");
+  const [sortBy,setSortBy]=useState("date");
+  const filtered=useMemo(()=>{let res=orders.filter(o=>{if(filterStatus==="open"&&o.status==="complete")return false;if(filterStatus==="blocked"&&!(o.shortages||[]).some(s=>!s.received))return false;if(filterStatus==="complete"&&o.status!=="complete")return false;if(filterStatus==="overdue"&&!(o.targetDate&&o.status!=="complete"&&new Date(o.targetDate)<new Date()))return false;if(filterProj!=="all"&&o.projectId!==filterProj)return false;if(search&&!o.woNumber?.toLowerCase().includes(search.toLowerCase())&&!o.description?.toLowerCase().includes(search.toLowerCase()))return false;return true});if(sortBy==="wo")res=[...res].sort((a,b)=>a.woNumber.localeCompare(b.woNumber));else if(sortBy==="overdue")res=[...res].sort((a,b)=>(b.targetDate?daysBetween(b.targetDate,todays()):0)-(a.targetDate?daysBetween(a.targetDate,todays()):0));else res=[...res].sort((a,b)=>(b.receivedDate||"").localeCompare(a.receivedDate||""));return res},[orders,filterStatus,filterProj,search,sortBy]);
+  const del=id=>{if(!confirm('למחוק פק"ע זו?'))return;updO(prev=>prev.filter(o=>o.id!==id));if(detail?.id===id)setDetail(null)};
+  const handleUpd=(upd,action,oid)=>{updO(prev=>prev.map(o=>o.id===upd.id?upd:o),action,"",oid||upd.id);setDetail(upd)};
+  if(detail)return<OrderDetail order={detail} projects={projects} onClose={()=>setDetail(null)} onUpdate={handleUpd}/>;
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:10}}>
+        <h2 style={{margin:0}}>📋 פקודות עבודה</h2>
+        {canEdit&&<Btn color="#3b82f6" onClick={()=>{setEditing(null);setShowForm(true)}}>+ פק"ע חדשה</Btn>}
+      </div>
+      <Card style={{padding:"12px 14px",marginBottom:12,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+        <div style={{display:"flex",flexDirection:"column",gap:3,flex:"1 1 150px"}}><label style={{fontSize:11,color:"var(--c-dim)"}}>חיפוש</label><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="חיפוש לפי מספר / תיאור..."/></div>
+        <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"var(--c-dim)"}}>פרויקט</label><select value={filterProj} onChange={e=>setFilterProj(e.target.value)} style={{padding:"7px 8px",fontSize:12}}><option value="all">כל הפרויקטים</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+        <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"var(--c-dim)"}}>סטטוס</label>
+          <div style={{display:"flex",flexWrap:"wrap"}}>
+            {[["all","הכל"],["open","פתוחות"],["blocked","תקועות"],["complete","הושלמו"],["overdue","באיחור"]].map(([v,l],i,arr)=>(
+              <button key={v} onClick={()=>setFilterStatus(v)} style={{background:filterStatus===v?"#3b82f6":"var(--c-card)",border:"1px solid var(--c-border2)",borderRight:i<arr.length-1?"none":"1px solid var(--c-border2)",color:filterStatus===v?"#fff":"#94a3b8",padding:"7px 10px",fontSize:12,fontWeight:600,fontFamily:"inherit",borderRadius:i===0?"7px 0 0 7px":i===arr.length-1?"0 7px 7px 0":"0"}}>{l}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"var(--c-dim)"}}>מיון</label><select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{padding:"7px 8px",fontSize:12}}><option value="date">תאריך קבלה</option><option value="wo">מספר פק"ע</option><option value="overdue">עיכוב</option></select></div>
+        <div style={{fontSize:12,color:"var(--c-dim)",alignSelf:"center",paddingBottom:2}}>{filtered.length} פק"ע</div>
+      </Card>
+      <div style={{display:"flex",flexDirection:"column",gap:7}}>
+        {filtered.length===0&&<div style={{color:"#64748b",textAlign:"center",padding:40}}>אין פק"ע להצגה</div>}
+        {filtered.map(o=>{const sup=o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0),pct=o.qty?Math.min(100,Math.round(sup/Number(o.qty)*100)):0,oSh=(o.shortages||[]).filter(s=>!s.received).length,proj=projects.find(p=>p.id===o.projectId),ov=o.targetDate&&o.status!=="complete"&&new Date(o.targetDate)<new Date(),ovD=ov?daysBetween(o.targetDate,todays()):null;return(
+          <div key={o.id} style={{background:"var(--c-card)",borderRadius:10,padding:"12px 14px",border:`1px solid ${ov?"#ef444455":"var(--c-border)"}`,cursor:"pointer",transition:"border-color .15s"}}
+            onClick={()=>setDetail(o)}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=ov?"#ef4444":"#60a5fa"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=ov?"#ef444455":"var(--c-border)"}
+          >
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{fontWeight:700,fontSize:15}}>{o.woNumber}</span>{proj&&<span style={{fontSize:11,background:"var(--c-tag-blue-bg)",color:"var(--c-tag-blue)",padding:"2px 7px",borderRadius:20}}>{proj.name}</span>}{oSh>0&&<span style={{fontSize:11,background:"#450a0a",color:"#fca5a5",padding:"2px 7px",borderRadius:20}}>⚠️ {oSh}</span>}{ov&&<span style={{fontSize:11,background:"#450a0a",color:"#ef4444",padding:"2px 7px",borderRadius:20}}>🚨 +{ovD}d</span>}</div>
+              <div style={{display:"flex",gap:4,alignItems:"center"}}><Badge status={o.status}/>{canEdit&&<><IBtn onClick={e=>{e.stopPropagation();setEditing(o);setShowForm(true)}}>✏️</IBtn><IBtn onClick={e=>{e.stopPropagation();del(o.id)}}>🗑️</IBtn></>}</div>
+            </div>
+            {o.description&&<div style={{fontSize:13,color:"#94a3b8",marginBottom:4}}>{o.description}</div>}
+            <div style={{display:"flex",gap:10,fontSize:12,color:"#64748b",marginBottom:5,flexWrap:"wrap"}}><span>כמות: <b style={{color:"var(--c-text)"}}>{Number(o.qty||0).toLocaleString()}</b></span><span>מחיר: <b style={{color:"#a78bfa"}}>{fmtMoney(o.unitPrice)}</b></span><span>קבלה: {fmt(o.receivedDate)}</span><span>יעד: <b style={{color:ov?"#ef4444":"var(--c-text)"}}>{fmt(o.targetDate)}</b></span></div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{flex:1}}><PBar pct={pct}/></div><span style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap"}}>{sup.toLocaleString()}/{Number(o.qty||0).toLocaleString()} ({pct}%)</span></div>
+          </div>
+        )})}
+      </div>
+      {showForm&&(<Modal onClose={()=>setShowForm(false)}><OrderForm initial={editing} projects={projects} onSave={data=>{if(editing)updO(prev=>prev.map(o=>o.id===editing.id?{...editing,...data}:o));else updO(prev=>[...prev,{...data,id:uid(),deliveries:[],shortages:[],defects:[],status:"open"}]);setShowForm(false)}} onClose={()=>setShowForm(false)}/></Modal>)}
+    </div>
+  );
+}
+
+// ── Shortages ──────────────────────────────────────────────────────────────────
+function Shortages({orders,updO,projects}){
+  const {canEdit}=useAuth();
+  const [filter,setFilter]=useState("open");
+  const [filterProj,setFilterProj]=useState("all");
+  const [partialModal,setPartialModal]=useState(null);
+  const [partialQty,setPartialQty]=useState("");
+  const projList=useMemo(()=>[...new Set(orders.flatMap(o=>(o.shortages||[]).length>0?[o.projectId]:[])).values()].map(id=>projects.find(p=>p.id===id)).filter(Boolean),[orders,projects]);
+  const all=orders.flatMap(o=>(o.shortages||[]).map(s=>({...s,order:o}))).filter(s=>{if(filterProj!=="all"&&s.order.projectId!==filterProj)return false;return filter==="all"||(filter==="open"&&!s.received)||(filter==="received"&&s.received)});
+  const markRec=(oid,sid)=>{updO(prev=>prev.map(o=>{if(o.id!==oid)return o;const sh=o.shortages.map(s=>s.id===sid?{...s,received:true,receivedDate:todays(),receivedQty:Number(s.missing||0)}:s);return{...o,shortages:sh,status:calcStatus({...o,shortages:sh})}}))};
+  const markRecPartial=(oid,sid,qty)=>{updO(prev=>prev.map(o=>{if(o.id!==oid)return o;const sh=o.shortages.map(s=>{if(s.id!==sid)return s;const nq=Number(s.receivedQty||0)+Number(qty),tot=Number(s.missing||0);return{...s,receivedQty:nq,received:tot>0&&nq>=tot,receivedDate:todays()}});return{...o,shortages:sh,status:calcStatus({...o,shortages:sh})}}));setPartialModal(null);setPartialQty("")};
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:10}}>
+        <h2 style={{margin:0,fontSize:22,color:"#f87171"}}>⚠️ חוסרים בזוודים</h2>
+        <SegBtn options={[["open","פתוחים"],["received","שהתקבלו"],["all","הכל"]]} value={filter} onChange={setFilter}/>
+      </div>
+      <Card style={{padding:"10px 14px",marginBottom:12,display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap"}}>
+        <div style={{display:"flex",flexDirection:"column",gap:3,minWidth:160}}><label style={{fontSize:11,color:"var(--c-dim)"}}>פרויקט</label><select value={filterProj} onChange={e=>setFilterProj(e.target.value)} style={{padding:"6px 8px",fontSize:12}}><option value="all">כל הפרויקטים</option>{projList.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+        <div style={{fontSize:12,color:"var(--c-dim)",paddingBottom:4}}>{all.length} חוסרים</div>
+      </Card>
+      {all.length===0?<div style={{textAlign:"center",padding:60,color:"#64748b",fontSize:18}}>{filter==="open"?"🎉 אין חוסרים פתוחים!":"אין נתונים"}</div>:(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {all.map(s=>{const rq=Number(s.receivedQty||0),tot=Number(s.missing||0),isPar=rq>0&&!s.received;return(
+            <div key={s.id} style={{background:"var(--c-card)",borderRadius:10,padding:"12px 14px",border:`1px solid ${s.received?"#10b98133":isPar?"#f59e0b33":"#ef444433"}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:s.received?"#10b981":isPar?"#f59e0b":"#f87171",marginBottom:3}}>{s.item}{s.sku&&<span style={{fontSize:11,color:"#93c5fd",marginRight:8,fontWeight:400}}>מק"ט: {s.sku}</span>}</div>
+                <div style={{fontSize:12,color:"#94a3b8",display:"flex",gap:10,flexWrap:"wrap"}}><span style={{color:"#60a5fa"}}>{s.order.woNumber}</span>{tot>0&&<span>נדרש: {tot}{rq>0&&!s.received?` | התקבל: ${rq}`:""}</span>}<span>הוזמן: {fmt(s.orderedDate)}</span>{s.received&&<span style={{color:"#a78bfa"}}>⏱ {daysBetween(s.orderedDate,s.receivedDate)} ימים</span>}</div>
+                {(s.reason||s.responsible)&&<div style={{fontSize:11,color:"#64748b",marginTop:3,display:"flex",gap:10,flexWrap:"wrap"}}>{s.reason&&<span>סיבה: {s.reason}</span>}{s.responsible&&<span style={{color:"#a78bfa"}}>אחראי: {s.responsible}</span>}</div>}
+              </div>
+              <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                {canEdit&&!s.received&&<><Btn color="#f59e0b" style={{fontSize:12,padding:"6px 10px"}} onClick={()=>{setPartialModal({oid:s.order.id,sid:s.id,item:s.item,missing:s.missing,receivedQty:s.receivedQty});setPartialQty("")}}>📦 חלקי</Btn><Btn color="#10b981" style={{fontSize:12,padding:"6px 10px"}} onClick={()=>markRec(s.order.id,s.id)}>✅ הכל התקבל</Btn></>}
+                {s.received?<span style={{fontSize:11,background:"#052e16",color:"#6ee7b7",padding:"3px 9px",borderRadius:20}}>✅ הושלם</span>:isPar?<span style={{fontSize:11,background:"#451a0344",color:"#fbbf24",padding:"3px 9px",borderRadius:20}}>📦 חלקי</span>:<span style={{fontSize:11,background:"#450a0a",color:"#fca5a5",padding:"3px 9px",borderRadius:20}}>❌ ממתין</span>}
+              </div>
+            </div>
+          )})}
+        </div>
+      )}
+      {partialModal&&(<div onClick={()=>setPartialModal(null)} style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:24,minWidth:280,border:"1px solid var(--c-border2)"}}><div style={{fontWeight:700,fontSize:16,marginBottom:12,color:"#f59e0b"}}>📦 רישום קבלה חלקית</div><div style={{fontSize:13,color:"#94a3b8",marginBottom:12}}>{partialModal.item}</div><Field label="כמות שהתקבלה עכשיו" type="number" value={partialQty} onChange={setPartialQty}/><div style={{display:"flex",gap:8,marginTop:14}}><Btn color="#f59e0b" onClick={()=>partialQty&&markRecPartial(partialModal.oid,partialModal.sid,partialQty)}>שמור קבלה</Btn><Btn onClick={()=>setPartialModal(null)}>ביטול</Btn></div></div></div>)}
+    </div>
+  );
+}
+
+// ── Projects ───────────────────────────────────────────────────────────────────
+function Projects({projects,orders,updP}){
+  const {canEdit}=useAuth();
+  const [showForm,setShowForm]=useState(false);
+  const [name,setName]=useState("");
+  const [editModal,setEditModal]=useState(null);
+  const add=()=>{if(!name.trim())return;const newId=uid();updP(prev=>[...prev,{id:newId,name:name.trim()}],`הוספת פרויקט: ${name.trim()}`,``,newId);setName("");setShowForm(false)};
+  const del=id=>{if(orders.some(o=>o.projectId===id))return alert('לא ניתן למחוק פרויקט עם פק"ע');const p=projects.find(pr=>pr.id===id);updP(prev=>prev.filter(pr=>pr.id!==id),`מחיקת פרויקט: ${p?.name||""}`,``,id)};
+  const saveEdit=()=>{if(!editModal||!editModal.name.trim())return;const orig=projects.find(p=>p.id===editModal.id);updP(prev=>prev.map(p=>p.id===editModal.id?{...p,name:editModal.name.trim()}:p),`עריכת פרויקט: ${orig?.name||""} → ${editModal.name.trim()}`,``,editModal.id);setEditModal(null)};
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <h2 style={{margin:0,fontSize:22}}>🏗️ פרויקטים</h2>
+        {canEdit&&<Btn color="#3b82f6" onClick={()=>setShowForm(p=>!p)}>+ פרויקט חדש</Btn>}
+      </div>
+      {showForm&&canEdit&&(<Card style={{marginBottom:12,display:"flex",gap:10,alignItems:"flex-end",padding:12}}><div style={{flex:1}}><Field label="שם הפרויקט" value={name} onChange={setName}/></div><Btn color="#10b981" onClick={add}>הוסף</Btn><Btn onClick={()=>setShowForm(false)}>ביטול</Btn></Card>)}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:12}}>
+        {projects.map((p,idx)=>{const po=orders.filter(o=>o.projectId===p.id),sup=po.reduce((s,o)=>s+o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0),0),qty=po.reduce((s,o)=>s+Number(o.qty||0),0),rev=po.reduce((s,o)=>s+o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0)*Number(o.unitPrice||0),0),pct=qty?Math.min(100,Math.round(sup/qty*100)):0,ov=po.filter(o=>o.targetDate&&o.status!=="complete"&&new Date(o.targetDate)<new Date()).length,c=COLORS[idx%COLORS.length];return(
+          <Card key={p.id}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,alignItems:"center"}}><span style={{fontWeight:700,fontSize:15}}>{p.name}</span>{canEdit&&<div style={{display:"flex",gap:4}}><IBtn onClick={()=>setEditModal({id:p.id,name:p.name})} title="ערוך">✏️</IBtn><IBtn onClick={()=>del(p.id)}>🗑️</IBtn></div>}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>{[['פק"ע',po.length],["פתוחות",po.filter(o=>o.status!=="complete").length],["סופק",sup.toLocaleString()],["הכנסות",fmtMoney(rev)]].map(([l,v])=>(<div key={l} style={{background:"var(--c-deep)",borderRadius:8,padding:"7px 10px"}}><div style={{fontSize:11,color:"#64748b"}}>{l}</div><div style={{fontWeight:700,fontSize:14}}>{v}</div></div>))}</div>
+            {ov>0&&<div style={{fontSize:12,color:"#ef4444",marginBottom:7}}>🚨 {ov} פק"ע באיחור</div>}
+            {qty>0&&<><div style={{height:7,background:"var(--c-border)",borderRadius:4,overflow:"hidden",marginBottom:3}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${c}66,${c})`,borderRadius:4,transition:"width .6s"}}/></div><div style={{fontSize:11,color:"#64748b"}}>{pct}% הושלם</div></>}
+          </Card>
+        )})}
+      </div>
+      {editModal&&(<div onClick={()=>setEditModal(null)} style={{position:"fixed",inset:0,background:"#000000bb",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:14,padding:28,minWidth:300,border:"1px solid #3b82f655"}}><div style={{fontWeight:700,fontSize:17,marginBottom:14,color:"#60a5fa"}}>✏️ עריכת פרויקט</div><Field label="שם הפרויקט" value={editModal.name} onChange={v=>setEditModal(p=>({...p,name:v}))}/><div style={{display:"flex",gap:8,marginTop:14}}><Btn color="#10b981" onClick={saveEdit}>✅ שמור</Btn><Btn onClick={()=>setEditModal(null)}>ביטול</Btn></div></div></div>)}
+    </div>
+  );
+}
+
+// ── Defects Dashboard ──────────────────────────────────────────────────────────
+function DefectsDashboard({orders,projects}){
+  const [filterProj,setFilterProj]=useState("all");
+  const [filterStatus,setFilterStatus]=useState("open");
+  const [filterSev,setFilterSev]=useState("all");
+  const [filterType,setFilterType]=useState("all");
+  const sevLabel={low:"נמוכה",medium:"בינונית",high:"גבוהה",critical:"קריטית"};
+  const sevColor={low:"#10b981",medium:"#f59e0b",high:"#ef4444",critical:"#dc2626"};
+  const typeLabel={quality:"איכות",process:"תהליך",material:"חומר גלם",equipment:"ציוד",human:"גורם אנושי",other:"אחר"};
+  const allDefects=useMemo(()=>orders.flatMap(o=>(o.defects||[]).map(d=>({...d,order:o,proj:projects.find(p=>p.id===o.projectId)}))),[orders,projects]);
+  const filtered=allDefects.filter(d=>{if(filterProj!=="all"&&d.order.projectId!==filterProj)return false;if(filterStatus==="open"&&d.status==="closed")return false;if(filterStatus==="closed"&&d.status!=="closed")return false;if(filterSev!=="all"&&d.severity!==filterSev)return false;if(filterType!=="all"&&d.type!==filterType)return false;return true});
+  const openDef=allDefects.filter(d=>d.status!=="closed");
+  const byType=Object.entries(typeLabel).map(([k,l])=>({label:l,value:allDefects.filter(d=>d.type===k).length,open:allDefects.filter(d=>d.type===k&&d.status!=="closed").length})).filter(x=>x.value>0);
+  const bySev=Object.entries(sevLabel).map(([k,l])=>({label:l,value:allDefects.filter(d=>d.severity===k).length,color:sevColor[k]})).filter(x=>x.value>0);
+  const byProj=projects.map(p=>({name:p.name,total:allDefects.filter(d=>d.order.projectId===p.id).length,open:allDefects.filter(d=>d.order.projectId===p.id&&d.status!=="closed").length})).filter(x=>x.total>0);
+  const byWO=orders.map(o=>({wo:o.woNumber,desc:o.description,total:(o.defects||[]).length,open:(o.defects||[]).filter(d=>d.status!=="closed").length,proj:projects.find(p=>p.id===o.projectId)?.name})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total).slice(0,8);
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}><h2 style={{margin:0,fontSize:22,color:"#fb923c"}}>🔧 דשבורד תקלות ייצור</h2><div style={{fontSize:12,color:"#64748b"}}>{allDefects.length} תקלות</div></div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:9,marginBottom:14}}>
+        {[["🔧",allDefects.length,'סה"כ תקלות',"#fb923c"],["🔴",openDef.length,"פתוחות","#ef4444"],["✅",allDefects.filter(d=>d.status==="closed").length,"נסגרו","#10b981"],["⚡",openDef.filter(d=>d.severity==="critical").length,"קריטיות","#dc2626"],["🟠",openDef.filter(d=>d.severity==="high").length,"גבוהה","#f97316"],["📋",orders.filter(o=>(o.defects||[]).length>0).length,'פק"ע עם תקלות',"#a78bfa"]].map(([i,v,l,c])=>(
+          <KpiBox key={l} i={i} v={v} label={l} c={c}/>
+        ))}
+      </div>
+      <Card style={{marginBottom:14,padding:"12px 14px"}}>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"#64748b"}}>פרויקט</label><select value={filterProj} onChange={e=>setFilterProj(e.target.value)} style={{padding:"6px 8px",fontSize:12}}><option value="all">כל הפרויקטים</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"#64748b"}}>סטטוס</label><SegBtn options={[["all","הכל"],["open","פתוחות"],["closed","נסגרו"]]} value={filterStatus} onChange={setFilterStatus}/></div>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"#64748b"}}>חומרה</label><SegBtn options={[["all","הכל"],["critical","קריטית"],["high","גבוהה"],["medium","בינונית"],["low","נמוכה"]]} value={filterSev} onChange={setFilterSev}/></div>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={{fontSize:11,color:"#64748b"}}>סוג</label><select value={filterType} onChange={e=>setFilterType(e.target.value)} style={{padding:"6px 8px",fontSize:12}}><option value="all">כל הסוגים</option>{Object.entries(typeLabel).map(([k,l])=><option key={k} value={k}>{l}</option>)}</select></div>
+          <div style={{fontSize:12,color:"#64748b",alignSelf:"center"}}>{filtered.length} תקלות</div>
+        </div>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(250px,1fr))",gap:12,marginBottom:14}}>
+        {[{title:"📊 לפי חומרה",items:bySev.map(s=>({label:s.label,value:s.value,pct:Math.round(s.value/Math.max(allDefects.length,1)*100),color:s.color}))},{title:"🗂️ לפי סוג",items:byType.map((t,i)=>({label:t.label,value:t.value,pct:Math.round(t.value/Math.max(allDefects.length,1)*100),color:COLORS[i%COLORS.length]}))},{title:"🏗️ לפי פרויקט",items:byProj.map((p,i)=>({label:p.name,value:p.total,pct:Math.round(p.total/Math.max(allDefects.length,1)*100),color:COLORS[i%COLORS.length]}))}].map(({title,items})=>(
+          <Card key={title}><div style={{fontWeight:700,fontSize:14,marginBottom:12}}>{title}</div>{items.length===0?<div style={{color:"#64748b",textAlign:"center",padding:20}}>אין נתונים</div>:<div style={{display:"flex",flexDirection:"column",gap:7}}>{items.map(s=>(<div key={s.label}><div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}><span style={{color:s.color,fontWeight:600}}>{s.label}</span><span style={{color:"#94a3b8"}}>{s.value} ({s.pct}%)</span></div><div style={{height:7,background:"var(--c-border)",borderRadius:4,overflow:"hidden"}}><div style={{width:s.pct+"%",height:"100%",background:s.color,borderRadius:4,transition:"width .4s"}}/></div></div>))}</div>}</Card>
+        ))}
+      </div>
+      {byWO.length>0&&(<Card style={{marginBottom:14}}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📋 פק"ע עם הכי הרבה תקלות</div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8}}>{byWO.map(w=>(<div key={w.wo} style={{background:"var(--c-deep)",borderRadius:8,padding:"10px 12px",border:`1px solid ${w.open>0?"#f9731633":"#10b98133"}`}}><div style={{fontWeight:700,color:"#fb923c",fontSize:13}}>{w.wo}</div>{w.desc&&<div style={{fontSize:11,color:"#94a3b8",marginBottom:4}}>{w.desc}</div>}{w.proj&&<div style={{fontSize:11,color:"#93c5fd",marginBottom:4}}>{w.proj}</div>}<div style={{display:"flex",gap:8,fontSize:12}}><span style={{color:"#94a3b8"}}>סה"כ: <b style={{color:"#e2e8f0"}}>{w.total}</b></span><span style={{color:w.open>0?"#ef4444":"#10b981"}}>פתוחות: <b>{w.open}</b></span></div></div>))}</div></Card>)}
+      <Card><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📋 רשימת תקלות</div>{filtered.length===0?<div style={{color:"#64748b",textAlign:"center",padding:30}}>אין תקלות להצגה</div>:(
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>{filtered.map(d=>{const sc=sevColor[d.severity]||"#94a3b8";return(<div key={d.id} style={{background:"var(--c-deep)",borderRadius:8,padding:"10px 12px",border:`1px solid ${d.status==="closed"?"#10b98133":sc+"44"}`,opacity:d.status==="closed"?.65:1}}><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}><span style={{fontWeight:700,fontSize:13}}>{d.title}</span><span style={{fontSize:11,background:sc+"22",color:sc,padding:"2px 8px",borderRadius:12}}>{sevLabel[d.severity]||d.severity}</span><span style={{fontSize:11,background:"var(--c-card)",color:"#93c5fd",padding:"2px 8px",borderRadius:12}}>{typeLabel[d.type]||d.type}</span>{d.status==="closed"&&<span style={{fontSize:11,background:"#052e16",color:"#6ee7b7",padding:"2px 8px",borderRadius:12}}>✅ נסגרה</span>}</div><div style={{fontSize:12,color:"#64748b",display:"flex",gap:12,flexWrap:"wrap"}}><span style={{color:"#60a5fa"}}>{d.order.woNumber}</span>{d.proj&&<span>{d.proj.name}</span>}{d.responsible&&<span style={{color:"#a78bfa"}}>אחראי: {d.responsible}</span>}{d.discoveredDate&&<span>גולה: {fmt(d.discoveredDate)}</span>}</div></div>)})}</div>
+      )}</Card>
+    </div>
+  );
+}
+
+// ── Excel Tab ──────────────────────────────────────────────────────────────────
 function ExcelTab({orders,projects,updO}){
   const [drag,setDrag]=useState(false);
   const [preview,setPreview]=useState(null);
@@ -461,6 +1138,8 @@ function ExcelTab({orders,projects,updO}){
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet([{'מספר פק"ע':"WO-001","כותרת":"כשל בבדיקת בקרה","סוג":"איכות","חומרה":"גבוהה","תיאור":"בדיקת לחץ נכשלה","אחראי":"יוסי לוי","תאריך גילוי":"2024-02-12","סטטוס":"פתוח"}]),"תקלות");
     XLSX.writeFile(wb,"תבנית_ייבוא_מלא.xlsx");
   };
+  const SC2={"complete":"#10b981","partial":"#3b82f6","blocked":"#ef4444","open":"#f59e0b"};
+  const SL2={"complete":"הושלמה","partial":"חלקית","blocked":"תקועה","open":"פתוחה"};
   const st=preview?{
     n:preview.length,
     d:preview.reduce((s,o)=>s+o.deliveries.length,0),
@@ -471,8 +1150,6 @@ function ExcelTab({orders,projects,updO}){
     blocked:preview.filter(o=>o.status==="blocked").length,
     open:preview.filter(o=>o.status==="open").length,
   }:null;
-  const SC2={"complete":"#10b981","partial":"#3b82f6","blocked":"#ef4444","open":"#f59e0b"};
-  const SL2={"complete":"הושלמה","partial":"חלקית","blocked":"תקועה","open":"פתוחה"};
   return(
     <div>
       <h2 style={{margin:"0 0 18px",fontSize:22}}>📂 ייבוא / ייצוא Excel</h2>
