@@ -22,6 +22,13 @@
   --c-border:#2d3748;--c-border2:#374151;--c-text:#e2e8f0;--c-muted:#94a3b8;--c-dim:#64748b;
   --c-input-bg:#0f1117;--c-input-border:#374151;--c-row-hover:#1a2035;
   --c-table-border:#1a2035;--c-tag-blue-bg:#1e3a5f;--c-tag-blue:#93c5fd;
+  /* Chart text colors as CSS vars so they respond to light mode */
+  --c-chart-label:#64748b;
+  --c-chart-axis-label:#94a3b8;
+  --c-chart-grid:#374151;
+  --c-chart-grid2:#1a2540;
+  --c-chart-tooltip-bg:#131825;
+  --c-chart-inner:#131825;
   --safe-top:env(safe-area-inset-top,0px);
   --safe-bottom:env(safe-area-inset-bottom,0px);
 }
@@ -30,9 +37,16 @@ body.light-mode{
   --c-border:#e2e8f0;--c-border2:#cbd5e1;--c-text:#1e293b;--c-muted:#64748b;--c-dim:#94a3b8;
   --c-input-bg:#ffffff;--c-input-border:#cbd5e1;--c-row-hover:#f8fafc;
   --c-table-border:#e2e8f0;--c-tag-blue-bg:#dbeafe;--c-tag-blue:#2563eb;
+  /* Chart text: darker in light mode for readability */
+  --c-chart-label:#374151;
+  --c-chart-axis-label:#4b5563;
+  --c-chart-grid:#e2e8f0;
+  --c-chart-grid2:#f1f5f9;
+  --c-chart-tooltip-bg:#1e293b;
+  --c-chart-inner:#ffffff;
 }
-body{background:var(--c-bg);font-family:'Segoe UI',Tahoma,Arial,sans-serif;color:var(--c-text);direction:rtl;transition:background .3s,color .3s;min-height:100vh;min-height:100dvh;overflow-x:hidden}
-input,select,textarea{background:var(--c-input-bg);border:1px solid var(--c-input-border);border-radius:8px;padding:9px 12px;color:var(--c-text);font-size:14px;font-family:inherit;width:100%;outline:none;transition:background .3s,color .3s,border-color .3s;-webkit-appearance:none;appearance:none}
+body{background:var(--c-bg);font-family:'Segoe UI',Tahoma,Arial,sans-serif;color:var(--c-text);direction:rtl;transition:background .25s,color .25s;min-height:100vh;min-height:100dvh;overflow-x:hidden}
+input,select,textarea{background:var(--c-input-bg);border:1px solid var(--c-input-border);border-radius:8px;padding:9px 12px;color:var(--c-text);font-size:14px;font-family:inherit;width:100%;outline:none;transition:background .25s,color .25s,border-color .2s;-webkit-appearance:none;appearance:none}
 input:focus,select:focus{border-color:#60a5fa}
 select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M6 8L0 0h12z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:left 10px center;padding-left:30px}
 select option{background:var(--c-card)}
@@ -171,9 +185,26 @@ const SegBtn=({options,value,onChange})=>(
 );
 
 // ── Bar Chart ──────────────────────────────────────────────────────────────────
-function BarChart({data,color,formatVal,height=150}){
+// Helper: read CSS var at render time (so charts respond to light/dark mode)
+function useCssVars(){
+  const s=getComputedStyle(document.documentElement);
+  const g=v=>s.getPropertyValue(v).trim();
+  return{
+    label:g("--c-chart-label")||"#64748b",
+    axis:g("--c-chart-axis-label")||"#94a3b8",
+    grid:g("--c-chart-grid")||"#374151",
+    grid2:g("--c-chart-grid2")||"#1a2540",
+    tooltip:g("--c-chart-tooltip-bg")||"#131825",
+    inner:g("--c-chart-inner")||"#131825",
+    text:g("--c-text")||"#e2e8f0",
+    muted:g("--c-muted")||"#94a3b8",
+  };
+}
+
+function BarChart({data,color,formatVal,height=130}){
   const [hov,setHov]=useState(null);
-  if(!data||!data.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#4b5563",fontSize:13}}>אין נתונים</div>;
+  const cv=useCssVars();
+  if(!data||!data.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--c-dim)",fontSize:13}}>אין נתונים</div>;
   const padL=36,padR=12,padT=20,padB=44,W=480,H=height+padT+padB;
   const maxV=Math.max(...data.map(d=>d.value),1);
   const mag=Math.pow(10,Math.floor(Math.log10(maxV)));
@@ -189,17 +220,17 @@ function BarChart({data,color,formatVal,height=150}){
   const fmtA=v=>v>=1e6?(v/1e6).toFixed(1)+"M":v>=1e3?(v/1e3).toFixed(0)+"K":""+v;
   return(
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}}>
-      {grids.map((v,i)=>{const y=padT+height-(v/niceMax)*height;return(<g key={i}><line x1={padL} y1={y} x2={W-padR} y2={y} stroke={i===0?"#374151":"#1a2540"} strokeWidth={i===0?1.5:1} strokeDasharray={i===0?"":"3 3"}/><text x={padL-6} y={y+4} textAnchor="end" fill="#4b5563" fontSize={10} fontFamily="sans-serif">{fmtA(v)}</text></g>)})}
-      {data.map((d,i)=>{const x=bx(i),h=bh(d.value),y=by(d.value),isH=hov===i,cx=x+bw/2;return(
+      {grids.map((v,i)=>{const y=padT+height-(v/niceMax)*height;return(<g key={i}><line x1={padL} y1={y} x2={W-padR} y2={y} stroke={i===0?cv.grid:cv.grid2} strokeWidth={i===0?1.5:1} strokeDasharray={i===0?"":"3 3"}/><text x={padL-6} y={y+4} textAnchor="end" fill={cv.label} fontSize={10} fontFamily="sans-serif">{fmtA(v)}</text></g>)})}
+      {data.map((d,i)=>{const x=bx(i),h=bh(d.value),y=by(d.value),isH=hov===i,cx2=x+bw/2;return(
         <g key={i} onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)} style={{cursor:"pointer"}}>
           {isH&&<rect x={x-3} y={y-3} width={bw+6} height={h+3} rx={5} fill={color} opacity={0.12}/>}
           <rect x={x} y={y} width={bw} height={h} rx={4} fill={isH?color:color+"bb"}/>
-          <rect x={x} y={y} width={bw} height={Math.min(5,h)} rx={4} fill="rgba(255,255,255,.18)"/>
-          {isH&&(<g><rect x={cx-38} y={y-32} width={76} height={24} rx={5} fill="#131825" stroke={color} strokeWidth={1}/><text x={cx} y={y-16} textAnchor="middle" fill={color} fontSize={11} fontWeight="700" fontFamily="sans-serif">{formatVal(d.value)}</text></g>)}
+          <rect x={x} y={y} width={bw} height={Math.min(5,h)} rx={4} fill="rgba(255,255,255,.2)"/>
+          {isH&&(<g><rect x={cx2-40} y={y-34} width={80} height={26} rx={5} fill={cv.tooltip} stroke={color} strokeWidth={1}/><text x={cx2} y={y-17} textAnchor="middle" fill={color} fontSize={11} fontWeight="700" fontFamily="sans-serif">{formatVal(d.value)}</text></g>)}
         </g>
       )})}
-      <line x1={padL} y1={padT+height} x2={W-padR} y2={padT+height} stroke="#374151" strokeWidth={1.5}/>
-      {data.map((d,i)=><text key={i} x={bx(i)+bw/2} y={padT+height+20} textAnchor="middle" fill="#94a3b8" fontSize={11} fontWeight="600" fontFamily="sans-serif">{fmtL(d.label)}</text>)}
+      <line x1={padL} y1={padT+height} x2={W-padR} y2={padT+height} stroke={cv.grid} strokeWidth={1.5}/>
+      {data.map((d,i)=><text key={i} x={bx(i)+bw/2} y={padT+height+20} textAnchor="middle" fill={cv.axis} fontSize={11} fontWeight="600" fontFamily="sans-serif">{fmtL(d.label)}</text>)}
     </svg>
   );
 }
@@ -207,8 +238,9 @@ function BarChart({data,color,formatVal,height=150}){
 // ── Donut Chart ────────────────────────────────────────────────────────────────
 function DonutChart({data,size=200}){
   const [hov,setHov]=useState(null);
+  const cv=useCssVars();
   const total=data.reduce((s,d)=>s+d.value,0);
-  if(!total||!data.length)return<div style={{height:size,display:"flex",alignItems:"center",justifyContent:"center",color:"#4b5563",flexDirection:"column",gap:8}}><span style={{fontSize:28}}>📊</span><span style={{fontSize:13}}>אין נתונים</span></div>;
+  if(!total||!data.length)return<div style={{height:size,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--c-dim)",flexDirection:"column",gap:8}}><span style={{fontSize:28}}>📊</span><span style={{fontSize:13}}>אין נתונים</span></div>;
   const R=size/2-10,r=R*.58,cx=size/2,cy=size/2;
   let angle=-Math.PI/2;
   const slices=data.map((d,i)=>{
@@ -232,11 +264,11 @@ function DonutChart({data,size=200}){
         <circle cx={cx} cy={cy} r={r-2} fill="var(--c-card)"/>
         {hS?(<>
           <text x={cx} y={cy-8} textAnchor="middle" fill={hS.color} fontSize={13} fontWeight="700" fontFamily="sans-serif">{hS.label.length>12?hS.label.slice(0,11)+"…":hS.label}</text>
-          <text x={cx} y={cy+10} textAnchor="middle" fill="#e2e8f0" fontSize={11} fontFamily="sans-serif">{hS.value.toLocaleString()}</text>
-          <text x={cx} y={cy+26} textAnchor="middle" fill="#94a3b8" fontSize={10} fontFamily="sans-serif">{Math.round(hS.pct*100)}%</text>
+          <text x={cx} y={cy+10} textAnchor="middle" fill={cv.text} fontSize={11} fontFamily="sans-serif">{hS.value.toLocaleString()}</text>
+          <text x={cx} y={cy+26} textAnchor="middle" fill={cv.muted} fontSize={10} fontFamily="sans-serif">{Math.round(hS.pct*100)}%</text>
         </>):(<>
-          <text x={cx} y={cy-2} textAnchor="middle" fill="#94a3b8" fontSize={10} fontFamily="sans-serif">סה"כ</text>
-          <text x={cx} y={cy+14} textAnchor="middle" fill="#e2e8f0" fontSize={13} fontWeight="700" fontFamily="sans-serif">{total.toLocaleString()}</text>
+          <text x={cx} y={cy-2} textAnchor="middle" fill={cv.muted} fontSize={10} fontFamily="sans-serif">סה"כ</text>
+          <text x={cx} y={cy+14} textAnchor="middle" fill={cv.text} fontSize={13} fontWeight="700" fontFamily="sans-serif">{total.toLocaleString()}</text>
         </>)}
       </svg>
       <div style={{display:"flex",flexDirection:"column",gap:5,minWidth:100}}>
@@ -253,9 +285,10 @@ function DonutChart({data,size=200}){
 }
 
 // ── Line Chart ─────────────────────────────────────────────────────────────────
-function LineChart({data,color,color2,label,label2,formatVal,height=160}){
+function LineChart({data,color,color2,label,label2,formatVal,height=130}){
   const [hov,setHov]=useState(null);
-  if(!data||data.length<2)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#4b5563",flexDirection:"column",gap:8}}><span style={{fontSize:28}}>📈</span><span style={{fontSize:13}}>נדרשים לפחות 2 תקופות</span></div>;
+  const cv=useCssVars();
+  if(!data||data.length<2)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--c-dim)",flexDirection:"column",gap:8}}><span style={{fontSize:28}}>📈</span><span style={{fontSize:13}}>נדרשים לפחות 2 תקופות</span></div>;
   const padL=40,padR=16,padT=16,padB=40,W=480,H=height+padT+padB;
   const v1s=data.map(d=>d.v1||0),v2s=data.map(d=>d.v2||0);
   const maxV=Math.max(...v1s,...(color2?v2s:[]),1);
@@ -274,30 +307,30 @@ function LineChart({data,color,color2,label,label2,formatVal,height=160}){
   return(
     <div>
       {color2&&<div style={{display:"flex",gap:20,marginBottom:10}}>
-        <div style={{display:"flex",alignItems:"center",gap:7}}><div style={{width:20,height:3,background:color,borderRadius:2}}/><span style={{fontSize:12,color:"#94a3b8",fontWeight:600}}>{label}</span></div>
-        <div style={{display:"flex",alignItems:"center",gap:7}}><div style={{width:20,height:3,background:color2,borderRadius:2,opacity:.75}}/><span style={{fontSize:12,color:"#94a3b8",fontWeight:600}}>{label2}</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:7}}><div style={{width:20,height:3,background:color,borderRadius:2}}/><span style={{fontSize:12,color:"var(--c-muted)",fontWeight:600}}>{label}</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:7}}><div style={{width:20,height:3,background:color2,borderRadius:2,opacity:.75}}/><span style={{fontSize:12,color:"var(--c-muted)",fontWeight:600}}>{label2}</span></div>
       </div>}
       <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}}>
         <defs>
           <linearGradient id="lg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity=".2"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient>
           {color2&&<linearGradient id="lg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color2} stopOpacity=".15"/><stop offset="100%" stopColor={color2} stopOpacity="0"/></linearGradient>}
         </defs>
-        {grids.map((v,i)=>{const y=py(v);return(<g key={i}><line x1={padL} y1={y} x2={W-padR} y2={y} stroke={i===0?"#374151":"#1a2540"} strokeWidth={i===0?1.5:1}/><text x={padL-6} y={y+4} textAnchor="end" fill="#4b5563" fontSize={10} fontFamily="sans-serif">{fmtA(v)}</text></g>)})}
+        {grids.map((v,i)=>{const y=py(v);return(<g key={i}><line x1={padL} y1={y} x2={W-padR} y2={y} stroke={i===0?cv.grid:cv.grid2} strokeWidth={i===0?1.5:1}/><text x={padL-6} y={y+4} textAnchor="end" fill={cv.label} fontSize={10} fontFamily="sans-serif">{fmtA(v)}</text></g>)})}
         {a2&&<path d={a2} fill="url(#lg2)"/>}
         {a1&&<path d={a1} fill="url(#lg1)"/>}
         {p2&&<path d={p2} fill="none" stroke={color2} strokeWidth={2} opacity={.7} strokeDasharray="5 3"/>}
         {p1&&<path d={p1} fill="none" stroke={color} strokeWidth={2.5}/>}
-        {hov!=null&&<line x1={px(hov)} y1={padT} x2={px(hov)} y2={padT+height} stroke="#ffffff15" strokeWidth={1}/>}
+        {hov!=null&&<line x1={px(hov)} y1={padT} x2={px(hov)} y2={padT+height} stroke={cv.grid2} strokeWidth={1}/>}
         {data.map((d,i)=>{const x=px(i),y1v=py(v1s[i]),isH=hov===i;return(
           <g key={i} onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)} style={{cursor:"pointer"}}>
             <rect x={x-14} y={padT} width={28} height={height} fill="transparent"/>
-            <circle cx={x} cy={y1v} r={isH?6:3} fill={color} stroke="#131825" strokeWidth={isH?2:1.5}/>
-            {color2&&<circle cx={x} cy={py(v2s[i])} r={isH?5:2.5} fill={color2} stroke="#131825" strokeWidth={1} opacity={.85}/>}
-            {isH&&(()=>{const th=color2?46:30,tw=114,tx=Math.min(Math.max(x-tw/2,padL),W-padR-tw),ty=y1v-th-10<padT?y1v+10:y1v-th-10;return(<g><rect x={tx} y={ty} width={tw} height={th} rx={6} fill="#131825" stroke={color} strokeWidth={1.2}/><text x={tx+tw/2} y={ty+th*.48} textAnchor="middle" fill={color} fontSize={12} fontWeight="700" fontFamily="sans-serif">{formatVal(v1s[i])}</text>{color2&&<text x={tx+tw/2} y={ty+th*.82} textAnchor="middle" fill={color2} fontSize={11} fontFamily="sans-serif">{v2s[i].toLocaleString()}</text>}</g>)})()}
+            <circle cx={x} cy={y1v} r={isH?6:3} fill={color} stroke={cv.inner} strokeWidth={isH?2:1.5}/>
+            {color2&&<circle cx={x} cy={py(v2s[i])} r={isH?5:2.5} fill={color2} stroke={cv.inner} strokeWidth={1} opacity={.85}/>}
+            {isH&&(()=>{const th=color2?46:30,tw=114,tx=Math.min(Math.max(x-tw/2,padL),W-padR-tw),ty=y1v-th-10<padT?y1v+10:y1v-th-10;return(<g><rect x={tx} y={ty} width={tw} height={th} rx={6} fill={cv.tooltip} stroke={color} strokeWidth={1.2}/><text x={tx+tw/2} y={ty+th*.48} textAnchor="middle" fill={color} fontSize={12} fontWeight="700" fontFamily="sans-serif">{formatVal(v1s[i])}</text>{color2&&<text x={tx+tw/2} y={ty+th*.82} textAnchor="middle" fill={color2} fontSize={11} fontFamily="sans-serif">{v2s[i].toLocaleString()}</text>}</g>)})()}
           </g>
         )})}
-        <line x1={padL} y1={padT+height} x2={W-padR} y2={padT+height} stroke="#374151" strokeWidth={1.5}/>
-        {data.map((d,i)=><text key={i} x={px(i)} y={padT+height+20} textAnchor="middle" fill="#94a3b8" fontSize={11} fontWeight="600" fontFamily="sans-serif">{fmtL(d.label)}</text>)}
+        <line x1={padL} y1={padT+height} x2={W-padR} y2={padT+height} stroke={cv.grid} strokeWidth={1.5}/>
+        {data.map((d,i)=><text key={i} x={px(i)} y={padT+height+20} textAnchor="middle" fill={cv.axis} fontSize={11} fontWeight="600" fontFamily="sans-serif">{fmtL(d.label)}</text>)}
       </svg>
     </div>
   );

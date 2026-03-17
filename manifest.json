@@ -2,13 +2,15 @@
   "name": "ניהול ייצור",
   "short_name": "PMO",
   "description": "מערכת ניהול פקודות עבודה וייצור",
-  "start_url": ".",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0f1117",
   "theme_color": "#0f1117",
   "orientation": "any",
   "dir": "rtl",
   "lang": "he",
+  "categories": ["productivity", "business"],
   "icons": [
     {
       "src": "icon-192.png",
