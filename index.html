@@ -185,19 +185,30 @@ const SegBtn=({options,value,onChange})=>(
 );
 
 // ── Bar Chart ──────────────────────────────────────────────────────────────────
-// Helper: read CSS var at render time (so charts respond to light/dark mode)
+// ── CSS Vars Hook — re-reads on every body class change (light/dark toggle) ──
 function useCssVars(){
+  const [cv,setCv]=useState(()=>readCssVars());
+  useEffect(()=>{
+    // Watch body classList for light-mode toggle
+    const obs=new MutationObserver(()=>setCv(readCssVars()));
+    obs.observe(document.body,{attributes:true,attributeFilter:["class"]});
+    return()=>obs.disconnect();
+  },[]);
+  return cv;
+}
+function readCssVars(){
   const s=getComputedStyle(document.documentElement);
   const g=v=>s.getPropertyValue(v).trim();
+  const lm=document.body.classList.contains("light-mode");
   return{
-    label:g("--c-chart-label")||"#64748b",
-    axis:g("--c-chart-axis-label")||"#94a3b8",
-    grid:g("--c-chart-grid")||"#374151",
-    grid2:g("--c-chart-grid2")||"#1a2540",
-    tooltip:g("--c-chart-tooltip-bg")||"#131825",
-    inner:g("--c-chart-inner")||"#131825",
-    text:g("--c-text")||"#e2e8f0",
-    muted:g("--c-muted")||"#94a3b8",
+    label: lm?"#374151":"#64748b",
+    axis:  lm?"#4b5563":"#94a3b8",
+    grid:  lm?"#d1d5db":"#374151",
+    grid2: lm?"#e5e7eb":"#1a2540",
+    tooltip: lm?"#1e293b":"#131825",
+    inner: lm?"#ffffff":"#131825",
+    text:  lm?"#1e293b":"#e2e8f0",
+    muted: lm?"#64748b":"#94a3b8",
   };
 }
 
@@ -1068,33 +1079,43 @@ function ExcelTab({orders,projects,updO}){
 
 // ── App ────────────────────────────────────────────────────────────────────────
 // ── PWA Banners ────────────────────────────────────────────────────────────────
-function InstallBanner({onInstall,onDismiss}){
+function InstallBanner({onInstall,onDismiss,lightMode}){
+  const lm=lightMode;
   return(
-    <div style={{position:"fixed",bottom:16,left:12,right:12,zIndex:999,background:"linear-gradient(135deg,#1e3a5f,#1e2130)",border:"1px solid #3b82f6",borderRadius:16,padding:"14px 16px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 8px 32px rgba(0,0,0,.6)"}}>
+    <div style={{position:"fixed",bottom:16,left:12,right:12,zIndex:999,
+      background:lm?"#eff6ff":"linear-gradient(135deg,#1e3a5f,#1e2130)",
+      border:"2px solid #3b82f6",borderRadius:16,padding:"14px 16px",
+      display:"flex",alignItems:"center",gap:12,
+      boxShadow:lm?"0 4px 24px rgba(59,130,246,.25)":"0 8px 32px rgba(0,0,0,.6)"}}>
       <div style={{fontSize:34,lineHeight:1,flexShrink:0}}>🏭</div>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{fontWeight:700,fontSize:14,color:"#e2e8f0",marginBottom:2}}>התקן את האפליקציה</div>
-        <div style={{fontSize:12,color:"#93c5fd"}}>גישה מהירה מהמסך הראשי — עובד גם offline</div>
+        <div style={{fontWeight:700,fontSize:14,color:lm?"#1e40af":"#e2e8f0",marginBottom:2}}>התקן את האפליקציה</div>
+        <div style={{fontSize:12,color:lm?"#3b82f6":"#93c5fd"}}>גישה מהירה מהמסך הראשי — עובד גם offline</div>
       </div>
       <div style={{display:"flex",gap:8,flexShrink:0}}>
-        <button onClick={onDismiss} style={{background:"#374151",border:"none",borderRadius:8,padding:"8px 12px",color:"#94a3b8",fontSize:13,fontFamily:"inherit"}}>לא עכשיו</button>
+        <button onClick={onDismiss} style={{background:lm?"#dbeafe":"#374151",border:"none",borderRadius:8,padding:"8px 12px",color:lm?"#1d4ed8":"#94a3b8",fontSize:13,fontFamily:"inherit"}}>לא עכשיו</button>
         <button onClick={onInstall} style={{background:"#3b82f6",border:"none",borderRadius:8,padding:"8px 16px",color:"#fff",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>התקן ↓</button>
       </div>
     </div>
   );
 }
 
-function UpdateBanner({onUpdate,onDismiss}){
+function UpdateBanner({onUpdate,onDismiss,lightMode}){
+  const lm=lightMode;
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,zIndex:1000,background:"linear-gradient(135deg,#052e16,#064e3b)",borderBottom:"2px solid #10b981",padding:"10px 16px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 4px 20px rgba(0,0,0,.5)"}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,zIndex:1000,
+      background:lm?"#f0fdf4":"linear-gradient(135deg,#052e16,#064e3b)",
+      borderBottom:lm?"2px solid #16a34a":"2px solid #10b981",
+      padding:"10px 16px",display:"flex",alignItems:"center",gap:12,
+      boxShadow:"0 4px 20px rgba(0,0,0,.3)"}}>
       <div style={{fontSize:22,flexShrink:0}}>🔄</div>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{fontWeight:700,fontSize:13,color:"#6ee7b7"}}>עדכון זמין לאפליקציה!</div>
-        <div style={{fontSize:11,color:"#34d399"}}>גרסה חדשה הורדה ברקע ומוכנה להתקנה</div>
+        <div style={{fontWeight:700,fontSize:13,color:lm?"#15803d":"#6ee7b7"}}>עדכון זמין לאפליקציה!</div>
+        <div style={{fontSize:11,color:lm?"#16a34a":"#34d399"}}>גרסה חדשה הורדה ברקע ומוכנה</div>
       </div>
       <div style={{display:"flex",gap:8,flexShrink:0}}>
-        <button onClick={onDismiss} style={{background:"none",border:"1px solid #065f46",borderRadius:7,padding:"5px 10px",color:"#6ee7b7",fontSize:12,fontFamily:"inherit"}}>אחר כך</button>
-        <button onClick={onUpdate} style={{background:"#10b981",border:"none",borderRadius:8,padding:"6px 14px",color:"#fff",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>עדכן עכשיו →</button>
+        <button onClick={onDismiss} style={{background:"none",border:`1px solid ${lm?"#16a34a":"#065f46"}`,borderRadius:7,padding:"5px 10px",color:lm?"#15803d":"#6ee7b7",fontSize:12,fontFamily:"inherit"}}>אחר כך</button>
+        <button onClick={onUpdate} style={{background:lm?"#16a34a":"#10b981",border:"none",borderRadius:8,padding:"6px 14px",color:"#fff",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>עדכן עכשיו →</button>
       </div>
     </div>
   );
@@ -1120,39 +1141,57 @@ function App(){
   const swRegRef=useRef(null);
   const oRef=useRef(orders),pRef=useRef(projects);
 
-  useEffect(()=>{document.body.classList.toggle("light-mode",lightMode);try{localStorage.setItem("pmo_light",lightMode?"1":"0")}catch{};const m=document.getElementById("tcm");if(m)m.content=lightMode?"#ffffff":"#0f1117"},[lightMode]);
-
-  // PWA install prompt listener
   useEffect(()=>{
+    document.body.classList.toggle("light-mode",lightMode);
+    try{localStorage.setItem("pmo_light",lightMode?"1":"0")}catch{};
+    const m=document.getElementById("tcm");
+    if(m)m.content=lightMode?"#ffffff":"#0f1117";
+  },[lightMode]);
+
+  // ── PWA Install prompt (beforeinstallprompt fires on Android Chrome) ──
+  useEffect(()=>{
+    // Show install banner if not already installed & not dismissed
+    const dismissed=localStorage.getItem("pmo_install_dismissed");
+    
     const handler=e=>{
-      e.preventDefault();
+      e.preventDefault(); // stop mini-infobar
       setInstallPrompt(e);
-      // Only show if not dismissed before
-      const dismissed=localStorage.getItem("pmo_install_dismissed");
       if(!dismissed) setShowInstallBanner(true);
     };
     window.addEventListener("beforeinstallprompt",handler);
+    
+    // Detect if running as installed PWA — hide banner
+    window.addEventListener("appinstalled",()=>{
+      setShowInstallBanner(false);
+      setInstallPrompt(null);
+      localStorage.setItem("pmo_install_dismissed","1");
+    });
+    
     return()=>window.removeEventListener("beforeinstallprompt",handler);
   },[]);
 
-  // SW registration + update detection
+  // ── Service Worker registration + update detection ──
   useEffect(()=>{
     if(!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("./sw.js").then(reg=>{
+    navigator.serviceWorker.register("./sw.js?v=3").then(reg=>{
       swRegRef.current=reg;
-      // Check for waiting SW (update ready)
+      // Already a waiting SW? Show update banner immediately
       if(reg.waiting) setShowUpdateBanner(true);
+      // New SW found during session
       reg.addEventListener("updatefound",()=>{
-        const newWorker=reg.installing;
-        if(!newWorker) return;
-        newWorker.addEventListener("statechange",()=>{
-          if(newWorker.state==="installed"&&navigator.serviceWorker.controller){
+        const nw=reg.installing;
+        if(!nw) return;
+        nw.addEventListener("statechange",()=>{
+          if(nw.state==="installed"&&navigator.serviceWorker.controller){
             setShowUpdateBanner(true);
           }
         });
       });
+      // Poll for updates every 30 minutes
+      const poll=setInterval(()=>reg.update(),30*60*1000);
+      return()=>clearInterval(poll);
     }).catch(()=>{});
-    // Listen for controller change (after update)
+    // When SW controller changes (after skipWaiting) → reload
     navigator.serviceWorker.addEventListener("controllerchange",()=>{
       window.location.reload();
     });
@@ -1161,10 +1200,10 @@ function App(){
   const handleInstall=async()=>{
     if(!installPrompt) return;
     installPrompt.prompt();
-    await installPrompt.userChoice;
+    const res=await installPrompt.userChoice;
     setInstallPrompt(null);
     setShowInstallBanner(false);
-    localStorage.setItem("pmo_install_dismissed","1");
+    if(res.outcome==="accepted") localStorage.setItem("pmo_install_dismissed","1");
   };
   const handleDismissInstall=()=>{
     setShowInstallBanner(false);
@@ -1172,11 +1211,8 @@ function App(){
   };
   const handleUpdate=()=>{
     const reg=swRegRef.current;
-    if(reg&&reg.waiting){
-      reg.waiting.postMessage({type:"SKIP_WAITING"});
-    } else {
-      window.location.reload();
-    }
+    if(reg&&reg.waiting) reg.waiting.postMessage({type:"SKIP_WAITING"});
+    else window.location.reload();
     setShowUpdateBanner(false);
   };
 
@@ -1211,20 +1247,21 @@ function App(){
   if(!currentUser)return(<AuthCtx.Provider value={{currentUser,canEdit,canViewProject}}><LoginScreen onLogin={handleLogin} lightMode={lightMode} toggleLight={()=>setLightMode(p=>!p)}/></AuthCtx.Provider>);
   if(loading)return(<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",gap:16}}><div style={{fontSize:48}}>🏭</div><div style={{color:"#60a5fa",fontSize:20,fontWeight:700}}>טוען...</div></div>);
 
+  const lm=lightMode;
   return(
     <AuthCtx.Provider value={{currentUser,canEdit,canViewProject}}>
-      {showUpdateBanner&&<UpdateBanner onUpdate={handleUpdate} onDismiss={()=>setShowUpdateBanner(false)}/>}
-      <Navbar tab={tab} setTab={setTab} lightMode={lightMode} toggleLight={()=>setLightMode(p=>!p)} sync={sync} onAdmin={()=>setShowAdmin(true)} onCustomize={()=>setShowCustomize(true)} onLogout={handleLogout}/>
-      <main className="main-content" style={{maxWidth:1440,margin:"0 auto",padding:"16px 14px",paddingBottom:showInstallBanner?"96px":"16px"}}>
-        {tab==="dashboard"&&<Dashboard orders={filteredOrders} projects={filteredProjects}/>}
+      {showUpdateBanner&&<UpdateBanner onUpdate={handleUpdate} onDismiss={()=>setShowUpdateBanner(false)} lightMode={lm}/>}
+      <Navbar tab={tab} setTab={setTab} lightMode={lm} toggleLight={()=>setLightMode(p=>!p)} sync={sync} onAdmin={()=>setShowAdmin(true)} onCustomize={()=>setShowCustomize(true)} onLogout={handleLogout}/>
+      <main className="main-content" style={{maxWidth:1440,margin:"0 auto",padding:"16px 14px",paddingBottom:showInstallBanner?"100px":"calc(16px + env(safe-area-inset-bottom,0px))"}}>
+        {tab==="dashboard"&&<Dashboard orders={filteredOrders} projects={filteredProjects} lightMode={lm}/>}
         {tab==="orders"&&<Orders orders={filteredOrders} projects={filteredProjects} updO={updO}/>}
         {tab==="shortages"&&<Shortages orders={filteredOrders} updO={updO} projects={filteredProjects}/>}
         {tab==="defects"&&<DefectsDashboard orders={filteredOrders} projects={filteredProjects} updO={updO}/>}
         {tab==="projects"&&<Projects projects={filteredProjects} orders={filteredOrders} updP={updP}/>}
         {tab==="excel"&&<ExcelTab orders={filteredOrders} projects={filteredProjects} updO={updO}/>}
       </main>
-      {showInstallBanner&&<InstallBanner onInstall={handleInstall} onDismiss={handleDismissInstall}/>}
-      {showAdmin&&<AdminPanel projects={projects} onClose={()=>setShowAdmin(false)} lightMode={lightMode} orders={orders} setOrders={setOrders} setProjects={setProjects} persist={persist}/>}
+      {showInstallBanner&&<InstallBanner onInstall={handleInstall} onDismiss={handleDismissInstall} lightMode={lm}/>}
+      {showAdmin&&<AdminPanel projects={projects} onClose={()=>setShowAdmin(false)} lightMode={lm} orders={orders} setOrders={setOrders} setProjects={setProjects} persist={persist}/>}
       {showCustomize&&<CustomizePanel onClose={()=>setShowCustomize(false)}/>}
     </AuthCtx.Provider>
   );
