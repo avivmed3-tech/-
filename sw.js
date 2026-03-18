@@ -1,4 +1,4 @@
-const CACHE = 'pmo-v3';
+const CACHE = 'pmo-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -12,7 +12,7 @@ const ASSETS = [
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE).then(c => c.addAll(ASSETS)).catch(() => {})
-    // NOT calling skipWaiting() here — user confirms update via banner
+    // NOT calling skipWaiting() — user confirms via banner
   );
 });
 
@@ -32,7 +32,6 @@ self.addEventListener('message', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Always network-first for Google Sheets
   if (e.request.url.includes('script.google.com')) {
     e.respondWith(
       fetch(e.request).catch(() =>
@@ -41,7 +40,6 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
-  // Cache-first for everything else, update cache in background
   e.respondWith(
     caches.match(e.request).then(cached => {
       const net = fetch(e.request).then(resp => {

@@ -98,6 +98,8 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const GS_URL="https://script.google.com/macros/s/AKfycbw5dVAVEX-4_2OC_56f276JI17SaTXtiMp5EoLWKA_VExe6oq52TaG_sbW4H_H97-6IIA/exec";
+const APP_VERSION="1.4.0";
+const APP_DATE="2026-03-18";
 const FALLBACK_USERS=[{id:"admin",username:"admin",password:"admin123",role:"admin",name:"מנהל מערכת",projectAccess:"all",canEdit:true,canView:true,active:true}];
 const DEF_PROJ=[{id:"p1",name:"פרויקט אלפא"},{id:"p2",name:"פרויקט בטא"},{id:"p3",name:"פרויקט גמא"}];
 const SC={open:"#f59e0b",partial:"#3b82f6",complete:"#10b981",blocked:"#ef4444"};
@@ -244,7 +246,7 @@ function BarChart({data,color,formatVal,height=130}){
           {isH&&<rect x={x-3} y={y-3} width={bw+6} height={h+3} rx={5} fill={color} opacity={0.12}/>}
           <rect x={x} y={y} width={bw} height={h} rx={4} fill={isH?color:color+"bb"}/>
           <rect x={x} y={y} width={bw} height={Math.min(5,h)} rx={4} fill="rgba(255,255,255,.2)"/>
-          {isH&&(<g><rect x={cx2-40} y={y-34} width={80} height={26} rx={5} fill={cv.tooltip} stroke={color} strokeWidth={1}/><text x={cx2} y={y-17} textAnchor="middle" fill={color} fontSize={11} fontWeight="700" fontFamily="sans-serif">{formatVal(d.value)}</text></g>)}
+          {isH&&(()=>{const tw=80,tx=Math.min(Math.max(cx2-tw/2,padL),W-padR-tw);return(<g><rect x={tx} y={y-34} width={tw} height={26} rx={5} fill={cv.tooltip} stroke={color} strokeWidth={1}/><text x={tx+tw/2} y={y-17} textAnchor="middle" fill={color} fontSize={11} fontWeight="700" fontFamily="sans-serif">{formatVal(d.value)}</text></g>);})()}
         </g>
       )})}
       <line x1={padL} y1={padT+height} x2={W-padR} y2={padT+height} stroke={cv.grid} strokeWidth={1.5}/>
@@ -779,7 +781,10 @@ function Navbar({tab,setTab,lightMode,toggleLight,sync,onAdmin,onCustomize,onLog
     <div className="nav-wrapper" style={{background:navBg,borderBottom:`1px solid ${navBorder}`,position:"sticky",top:0,zIndex:50,transition:"background .3s"}}>
       {/* Desktop nav */}
       <div style={{maxWidth:1440,margin:"0 auto",padding:"0 16px",display:"flex",alignItems:"center",gap:8,height:52}}>
-        <div style={{fontWeight:800,fontSize:15,color:navActive,whiteSpace:"nowrap"}}>🏭 ניהול ייצור</div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+          <div style={{fontWeight:800,fontSize:15,color:navActive,whiteSpace:"nowrap"}}>🏭 ניהול ייצור</div>
+          <span style={{fontSize:9,background:navActive+"22",color:navActive,padding:"2px 6px",borderRadius:10,border:`1px solid ${navActive}44`,fontWeight:700,letterSpacing:.3,whiteSpace:"nowrap"}}>v{APP_VERSION}</span>
+        </div>
         <div className="desk-nav" style={{flexWrap:"nowrap",overflowX:"auto",scrollbarWidth:"none"}}>
           {TABS.map(t=>(
             <button key={t.id} onClick={()=>{setTab(t.id);setMenuOpen(false)}} style={{padding:"0 14px",height:52,background:"none",border:"none",color:tab===t.id?navActive:navMuted,borderBottom:tab===t.id?`3px solid ${navActive}`:"3px solid transparent",fontWeight:tab===t.id?700:400,fontSize:13,whiteSpace:"nowrap",fontFamily:"inherit"}}>{t.label}</button>
@@ -1083,9 +1088,18 @@ function YieldDashboard({orders,projects}){
               <rect x={x} y={y} width={bw} height={h} rx={4} fill={isH?c:c+"cc"}/>
               <rect x={x} y={y} width={bw} height={Math.min(5,h)} rx={4} fill="rgba(255,255,255,.2)"/>
               {isH&&<g>
-                <rect x={cx2-42} y={y-38} width={84} height={32} rx={5} fill={cv.tooltip} stroke={c} strokeWidth={1}/>
-                <text x={cx2} y={y-22} textAnchor="middle" fill={c} fontSize={12} fontWeight="700" fontFamily="sans-serif">{d.yield.toFixed(1)}%</text>
-                <text x={cx2} y={y-10} textAnchor="middle" fill={cv.muted} fontSize={9} fontFamily="sans-serif">{d.defects} תקלות | {d.delivered.toLocaleString()} יח'</text>
+                {(()=>{
+                  const tw=90,th=36;
+                  // clamp X so tooltip stays inside padL..W-padR
+                  const tx=Math.min(Math.max(cx2-tw/2, padL), W-padR-tw);
+                  // show above bar if enough room, else below
+                  const ty=y-th-8>=padT ? y-th-8 : y+h+6;
+                  return(<g>
+                    <rect x={tx} y={ty} width={tw} height={th} rx={5} fill={cv.tooltip} stroke={c} strokeWidth={1}/>
+                    <text x={tx+tw/2} y={ty+14} textAnchor="middle" fill={c} fontSize={12} fontWeight="700" fontFamily="sans-serif">{d.yield.toFixed(1)}%</text>
+                    <text x={tx+tw/2} y={ty+27} textAnchor="middle" fill={cv.muted} fontSize={9} fontFamily="sans-serif">{d.defects} תקלות · {d.delivered.toLocaleString()} יח'</text>
+                  </g>);
+                })()}
               </g>}
             </g>
           );
@@ -1707,7 +1721,7 @@ function App(){
   // ── Service Worker registration + update detection ──
   useEffect(()=>{
     if(!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("./sw.js?v=3").then(reg=>{
+    navigator.serviceWorker.register("./sw.js?v=4").then(reg=>{
       swRegRef.current=reg;
       // Already a waiting SW? Show update banner immediately
       if(reg.waiting) setShowUpdateBanner(true);
