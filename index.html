@@ -14,7 +14,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
@@ -362,121 +362,137 @@ function doExport(orders,projects){
   const wb=XLSX.utils.book_new();
   const today=todays();
 
-  // ── helpers ──────────────────────────────────────────────────────────────
-  const hdrStyle={
-    font:{bold:true,color:{rgb:"FFFFFF"},name:"Arial",sz:11},
-    fill:{fgColor:{rgb:"1E293B"}},
+  // ── Style definitions (xlsx-js-style) ──────────────────────────────────
+  const FONT="Calibri";
+
+  // Header: dark navy bg, white bold Calibri, centered
+  const H=(extra={})=>({
+    font:{bold:true,color:{rgb:"FFFFFF"},name:FONT,sz:12},
+    fill:{fgColor:{rgb:"1E3A5F"}},
     alignment:{horizontal:"center",vertical:"center",wrapText:true,readingOrder:2},
-    border:{top:{style:"thin",color:{rgb:"374151"}},bottom:{style:"thin",color:{rgb:"374151"}},left:{style:"thin",color:{rgb:"374151"}},right:{style:"thin",color:{rgb:"374151"}}}
-  };
-  const rowStyleEven={
-    font:{name:"Arial",sz:10,color:{rgb:"1E293B"}},
-    fill:{fgColor:{rgb:"F0F4F8"}},
-    alignment:{vertical:"center",readingOrder:2},
-    border:{top:{style:"thin",color:{rgb:"E2E8F0"}},bottom:{style:"thin",color:{rgb:"E2E8F0"}},left:{style:"thin",color:{rgb:"E2E8F0"}},right:{style:"thin",color:{rgb:"E2E8F0"}}}
-  };
-  const rowStyleOdd={...rowStyleEven,fill:{fgColor:{rgb:"FFFFFF"}}};
-  const numStyle={...rowStyleEven,alignment:{horizontal:"center",vertical:"center",readingOrder:2}};
-  const numStyleOdd={...numStyle,fill:{fgColor:{rgb:"FFFFFF"}}};
-  const greenStyle={font:{name:"Arial",sz:10,bold:true,color:{rgb:"065F46"}},fill:{fgColor:{rgb:"D1FAE5"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border:{top:{style:"thin",color:{rgb:"E2E8F0"}},bottom:{style:"thin",color:{rgb:"E2E8F0"}},left:{style:"thin",color:{rgb:"E2E8F0"}},right:{style:"thin",color:{rgb:"E2E8F0"}}}};
-  const redStyle={...greenStyle,font:{name:"Arial",sz:10,bold:true,color:{rgb:"991B1B"}},fill:{fgColor:{rgb:"FEE2E2"}}};
-  const amberStyle={...greenStyle,font:{name:"Arial",sz:10,bold:true,color:{rgb:"92400E"}},fill:{fgColor:{rgb:"FEF3C7"}}};
+    border:{top:{style:"thin",color:{rgb:"2D5F8A"}},bottom:{style:"thin",color:{rgb:"2D5F8A"}},
+            left:{style:"thin",color:{rgb:"2D5F8A"}},right:{style:"thin",color:{rgb:"2D5F8A"}}},
+    ...extra
+  });
 
-  const statusStyle=s=>s==="complete"?greenStyle:s==="blocked"?redStyle:amberStyle;
+  // Data rows - even/odd alternating
+  const border={top:{style:"thin",color:{rgb:"D1D9E0"}},bottom:{style:"thin",color:{rgb:"D1D9E0"}},
+                left:{style:"thin",color:{rgb:"D1D9E0"}},right:{style:"thin",color:{rgb:"D1D9E0"}}};
+  const D=(even,extra={})=>({
+    font:{name:FONT,sz:11,color:{rgb:"1E293B"}},
+    fill:{fgColor:{rgb:even?"EBF3FB":"FFFFFF"}},
+    alignment:{horizontal:"center",vertical:"center",readingOrder:2,wrapText:false},
+    border,...extra
+  });
+  const DL=(even,extra={})=>({...D(even),alignment:{horizontal:"right",vertical:"center",readingOrder:2,wrapText:false},...extra});
+  const DN=(even,extra={})=>({...D(even),alignment:{horizontal:"center",vertical:"center",readingOrder:2},...extra});
 
-  const applyHdrs=(ws,headers,row=0)=>{
-    headers.forEach((h,c)=>{
-      const addr=XLSX.utils.encode_cell({r:row,c});
-      if(!ws[addr])ws[addr]={v:h,t:"s"};
-      ws[addr].s=hdrStyle;
+  // Status badges
+  const STATUS_S={complete:{font:{name:FONT,sz:11,bold:true,color:{rgb:"065F46"}},fill:{fgColor:{rgb:"D1FAE5"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border},
+    blocked:{font:{name:FONT,sz:11,bold:true,color:{rgb:"991B1B"}},fill:{fgColor:{rgb:"FEE2E2"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border},
+    partial:{font:{name:FONT,sz:11,bold:true,color:{rgb:"92400E"}},fill:{fgColor:{rgb:"FEF3C7"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border},
+    open:{font:{name:FONT,sz:11,bold:true,color:{rgb:"1E40AF"}},fill:{fgColor:{rgb:"DBEAFE"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border}};
+  const SEV_S={critical:{font:{name:FONT,sz:11,bold:true,color:{rgb:"991B1B"}},fill:{fgColor:{rgb:"FEE2E2"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border},
+    high:{font:{name:FONT,sz:11,bold:true,color:{rgb:"92400E"}},fill:{fgColor:{rgb:"FEF3C7"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border},
+    medium:{font:{name:FONT,sz:11,bold:true,color:{rgb:"713F12"}},fill:{fgColor:{rgb:"FEF9C3"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border},
+    low:{font:{name:FONT,sz:11,bold:true,color:{rgb:"065F46"}},fill:{fgColor:{rgb:"D1FAE5"}},alignment:{horizontal:"center",vertical:"center",readingOrder:2},border}};
+
+  // Build sheet from array of arrays, apply styles row-by-row
+  function makeSheet(headers, rows, colWidths, specialFn){
+    const ws=XLSX.utils.aoa_to_sheet([headers,...rows]);
+    // Header row
+    headers.forEach((_,c)=>{
+      const a=XLSX.utils.encode_cell({r:0,c});
+      if(ws[a]) ws[a].s=H();
     });
-  };
-  const applyRow=(ws,rowIdx,colCount,isEven,specialCols={})=>{
-    const base=isEven?rowStyleEven:rowStyleOdd;
-    const baseNum=isEven?numStyle:numStyleOdd;
-    for(let c=0;c<colCount;c++){
-      const addr=XLSX.utils.encode_cell({r:rowIdx,c});
-      if(!ws[addr])continue;
-      if(specialCols[c]){ws[addr].s=specialCols[c];}
-      else{ws[addr].s=typeof ws[addr].v==="number"?baseNum:base;}
-    }
-  };
-  const setColWidths=(ws,widths)=>{ws["!cols"]=widths.map(w=>({wch:w}))};
-  const setRTL=(ws)=>{if(!ws["!opts"])ws["!opts"]={};ws["!opts"].rightToLeft=true};
-  const freezeRow=(ws,row=1)=>{ws["!freeze"]={xSplit:0,ySplit:row,topLeftCell:XLSX.utils.encode_cell({r:row,c:0}),activePane:"bottomLeft",state:"frozen"}};
+    // Header row height
+    ws["!rows"]=[{hpx:28}];
+    // Data rows
+    rows.forEach((row,ri)=>{
+      const even=ri%2===0;
+      row.forEach((val,c)=>{
+        const a=XLSX.utils.encode_cell({r:ri+1,c});
+        if(!ws[a]) return;
+        const special=specialFn&&specialFn(ri,c,row);
+        ws[a].s = special || (typeof val==="number" ? DN(even) : D(even));
+      });
+      ws["!rows"].push({hpx:20});
+    });
+    ws["!cols"]=colWidths.map(w=>({wch:w}));
+    if(!ws["!opts"])ws["!opts"]={};
+    ws["!opts"].rightToLeft=true;
+    ws["!freeze"]={xSplit:0,ySplit:1,topLeftCell:"A2",activePane:"bottomLeft",state:"frozen"};
+    return ws;
+  }
 
-  // ── Sheet 1: פקודות עבודה ────────────────────────────────────────────────
-  const hdrs1=['מספר פק"ע','תיאור','פרויקט','כמות מוזמנת','מחיר ליחידה','כמות שסופקה','יתרה','הכנסות ממומשות','תאריך קבלה','יעד אספקה','סטטוס','חוסרים פתוחים','תקלות'];
-  const rows1=orders.map(o=>{
+  // ── Sheet 1: פקודות עבודה ─────────────────────────────────────────────
+  const h1=['מספר פק"ע','תיאור','פרויקט','כמות מוזמנת','מחיר ליחידה','סופק','יתרה','הכנסות','תאריך קבלה','יעד אספקה','סטטוס','חוסרים פתוחים','תקלות'];
+  const r1=orders.map(o=>{
     const proj=projects.find(p=>p.id===o.projectId);
     const sup=o.deliveries.reduce((a,d)=>a+Number(d.qty||0),0);
-    return[o.woNumber,o.description||"",proj?proj.name:"",Number(o.qty||0),Number(o.unitPrice||0),sup,Number(o.qty||0)-sup,sup*Number(o.unitPrice||0),o.receivedDate||"",o.targetDate||"",SL[o.status]||"",(o.shortages||[]).filter(s=>!s.received).length,(o.defects||[]).length];
+    return[o.woNumber,o.description||"",proj?proj.name:"",Number(o.qty||0),Number(o.unitPrice||0),sup,
+      Number(o.qty||0)-sup,sup*Number(o.unitPrice||0),o.receivedDate||"",o.targetDate||"",
+      SL[o.status]||"",(o.shortages||[]).filter(s=>!s.received).length,(o.defects||[]).length];
   });
-  const ws1=XLSX.utils.aoa_to_sheet([hdrs1,...rows1]);
-  applyHdrs(ws1,hdrs1);
-  rows1.forEach((_,i)=>applyRow(ws1,i+1,hdrs1.length,i%2===0,{10:statusStyle(orders[i].status),11:orders[i].shortages?.filter(s=>!s.received).length>0?redStyle:rowStyleEven,12:orders[i].defects?.length>0?amberStyle:rowStyleEven}));
-  setColWidths(ws1,[16,34,16,14,14,14,10,18,13,13,10,12,8]);
-  setRTL(ws1);freezeRow(ws1);
-  if(!ws1["!rows"])ws1["!rows"]=[];ws1["!rows"][0]={hpx:24};
+  const ws1=makeSheet(h1,r1,[16,32,16,14,14,12,10,18,13,13,12,12,8],
+    (ri,c,row)=>{
+      const even=ri%2===0;
+      if(c===10) return STATUS_S[orders[ri].status]||D(even);
+      if(c===11&&row[11]>0) return{...D(even),font:{name:FONT,sz:11,bold:true,color:{rgb:"991B1B"}}};
+      if(c===12&&row[12]>0) return{...D(even),font:{name:FONT,sz:11,bold:true,color:{rgb:"92400E"}}};
+      return null;
+    });
   XLSX.utils.book_append_sheet(wb,ws1,"פקודות עבודה");
 
-  // ── Sheet 2: אספקות ──────────────────────────────────────────────────────
-  const hdrs2=['מספר פק"ע','תיאור','פרויקט','תאריך אספקה','כמות','הכנסה','הערה'];
-  const dels=orders.flatMap(o=>{const proj=projects.find(p=>p.id===o.projectId);return o.deliveries.map(d=>[o.woNumber,o.description||"",proj?proj.name:"",d.date||"",Number(d.qty||0),Number(d.qty||0)*Number(o.unitPrice||0),d.note||""]);});
-  const ws2=XLSX.utils.aoa_to_sheet(dels.length?[hdrs2,...dels]:[hdrs2,["אין נתונים","","","","","",""]]);
-  applyHdrs(ws2,hdrs2);
-  dels.forEach((_,i)=>applyRow(ws2,i+1,hdrs2.length,i%2===0));
-  setColWidths(ws2,[16,30,14,13,10,16,30]);
-  setRTL(ws2);freezeRow(ws2);
-  if(!ws2["!rows"])ws2["!rows"]=[];ws2["!rows"][0]={hpx:24};
-  XLSX.utils.book_append_sheet(wb,ws2,"אספקות");
+  // ── Sheet 2: אספקות ──────────────────────────────────────────────────
+  const h2=['מספר פק"ע','תיאור פק"ע','פרויקט','תאריך','כמות','הכנסה (₪)','הערה'];
+  const r2=orders.flatMap(o=>{
+    const proj=projects.find(p=>p.id===o.projectId);
+    return o.deliveries.map(d=>[o.woNumber,o.description||"",proj?proj.name:"",d.date||"",
+      Number(d.qty||0),Number(d.qty||0)*Number(o.unitPrice||0),d.note||""]);
+  });
+  XLSX.utils.book_append_sheet(wb,makeSheet(h2,r2.length?r2:[["אין נתונים","","","",0,0,""]]
+    ,[16,30,16,13,10,16,28],null),"אספקות");
 
-  // ── Sheet 3: חוסרים ──────────────────────────────────────────────────────
-  const hdrs3=['מספר פק"ע','פריט','מק"ט','כמות חסרה','סיבה','אחראי','תאריך הזמנה','סטטוס','הערה'];
-  const shs=orders.flatMap(o=>(o.shortages||[]).map(s=>[o.woNumber,s.item||"",s.sku||"",Number(s.missing||0),s.reason||"",s.responsible||"",s.orderedDate||"",s.received?"התקבל":"ממתין",s.note||""]));
-  const ws3=XLSX.utils.aoa_to_sheet(shs.length?[hdrs3,...shs]:[hdrs3,["אין נתונים","","","","","","","",""]]);
-  applyHdrs(ws3,hdrs3);
-  shs.forEach((r,i)=>applyRow(ws3,i+1,hdrs3.length,i%2===0,{7:r[7]==="התקבל"?greenStyle:redStyle}));
-  setColWidths(ws3,[16,24,14,12,22,14,14,10,28]);
-  setRTL(ws3);freezeRow(ws3);
-  if(!ws3["!rows"])ws3["!rows"]=[];ws3["!rows"][0]={hpx:24};
-  XLSX.utils.book_append_sheet(wb,ws3,"חוסרים");
+  // ── Sheet 3: חוסרים ──────────────────────────────────────────────────
+  const h3=['מספר פק"ע','פריט','מק"ט','כמות חסרה','סיבה','אחראי','תאריך הזמנה','סטטוס','הערה'];
+  const r3=orders.flatMap(o=>(o.shortages||[]).map(s=>[o.woNumber,s.item||"",s.sku||"",
+    Number(s.missing||0),s.reason||"",s.responsible||"",s.orderedDate||"",s.received?"התקבל":"ממתין",s.note||""]));
+  XLSX.utils.book_append_sheet(wb,makeSheet(h3,r3.length?r3:[["אין נתונים","","",0,"","","","",""]]
+    ,[16,24,14,12,22,14,14,10,28],
+    (ri,c,row)=>c===7?(row[7]==="התקבל"?STATUS_S.complete:STATUS_S.blocked):null),"חוסרים");
 
-  // ── Sheet 4: תקלות ────────────────────────────────────────────────────────
-  const hdrs4=['מספר פק"ע','תיאור פק"ע','פרויקט','כותרת תקלה','סוג','חומרה','אחראי','תאריך גילוי','סטטוס','תיאור'];
+  // ── Sheet 4: תקלות ───────────────────────────────────────────────────
+  const h4=['מספר פק"ע','תיאור פק"ע','פרויקט','כותרת תקלה','סוג','חומרה','אחראי','תאריך גילוי','סטטוס','תיאור'];
   const sevLbl={critical:"קריטית",high:"גבוהה",medium:"בינונית",low:"נמוכה"};
   const typLbl={quality:"איכות",process:"תהליך",material:"חומר גלם",equipment:"ציוד",human:"גורם אנושי",other:"אחר"};
-  const defs=orders.flatMap(o=>{const proj=projects.find(p=>p.id===o.projectId);return(o.defects||[]).map(d=>[o.woNumber,o.description||"",proj?proj.name:"",d.title||"",typLbl[d.type]||d.type||"",sevLbl[d.severity]||d.severity||"",d.responsible||"",d.discoveredDate||"",d.status==="closed"?"סגורה":"פתוחה",d.description||""]);});
-  const sevStyleMap=r=>{const s=r[5];return s==="קריטית"?redStyle:s==="גבוהה"?amberStyle:s==="בינונית"?{...amberStyle,fill:{fgColor:{rgb:"FEF9C3"}},font:{...amberStyle.font,color:{rgb:"713F12"}}}:greenStyle};
-  const ws4=XLSX.utils.aoa_to_sheet(defs.length?[hdrs4,...defs]:[hdrs4,["אין נתונים","","","","","","","","",""]]);
-  applyHdrs(ws4,hdrs4);
-  defs.forEach((r,i)=>applyRow(ws4,i+1,hdrs4.length,i%2===0,{5:sevStyleMap(r),8:r[8]==="סגורה"?greenStyle:redStyle}));
-  setColWidths(ws4,[16,26,14,26,12,10,14,14,10,34]);
-  setRTL(ws4);freezeRow(ws4);
-  if(!ws4["!rows"])ws4["!rows"]=[];ws4["!rows"][0]={hpx:24};
-  XLSX.utils.book_append_sheet(wb,ws4,"תקלות");
+  const defRows=orders.flatMap(o=>{
+    const proj=projects.find(p=>p.id===o.projectId);
+    return(o.defects||[]).map(d=>[o.woNumber,o.description||"",proj?proj.name:"",d.title||"",
+      typLbl[d.type]||d.type||"",sevLbl[d.severity]||d.severity||"",d.responsible||"",
+      d.discoveredDate||"",d.status==="closed"?"סגורה":"פתוחה",d.description||""]);
+  });
+  // Map severity string back to key for styling
+  const sevKeyMap={"קריטית":"critical","גבוהה":"high","בינונית":"medium","נמוכה":"low"};
+  XLSX.utils.book_append_sheet(wb,makeSheet(h4,defRows.length?defRows:[["אין נתונים","","","","","","","","",""]]
+    ,[16,26,14,26,12,10,14,14,10,32],
+    (ri,c,row)=>{
+      if(c===5) return SEV_S[sevKeyMap[row[5]]]||null;
+      if(c===8) return row[8]==="סגורה"?STATUS_S.complete:STATUS_S.blocked;
+      return null;
+    }),"תקלות");
 
-  // ── Sheet 5: הכנסות חודשיות ───────────────────────────────────────────────
-  const hdrs5m=["חודש","כמות שסופקה","הכנסות (₪)"];
-  const mon={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=mkKey(d.date);if(!k)return;if(!mon[k])mon[k]={qty:0,rev:0};mon[k].qty+=Number(d.qty||0);mon[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0);}));
+  // ── Sheet 5: הכנסות חודשיות ──────────────────────────────────────────
+  const h5m=["חודש","כמות שסופקה","הכנסות (₪)"];
+  const mon={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=mkKey(d.date);if(!k)return;if(!mon[k])mon[k]={qty:0,rev:0};mon[k].qty+=Number(d.qty||0);mon[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));
   const monRows=Object.keys(mon).sort().map(k=>[k,mon[k].qty,mon[k].rev]);
-  const ws5=XLSX.utils.aoa_to_sheet(monRows.length?[hdrs5m,...monRows]:[hdrs5m,["אין נתונים",0,0]]);
-  applyHdrs(ws5,hdrs5m);
-  monRows.forEach((_,i)=>applyRow(ws5,i+1,3,i%2===0));
-  setColWidths(ws5,[14,16,18]);setRTL(ws5);freezeRow(ws5);
-  if(!ws5["!rows"])ws5["!rows"]=[];ws5["!rows"][0]={hpx:24};
-  XLSX.utils.book_append_sheet(wb,ws5,"הכנסות חודשיות");
+  XLSX.utils.book_append_sheet(wb,makeSheet(h5m,monRows.length?monRows:[["אין נתונים",0,0]],[14,16,18],null),"הכנסות חודשיות");
 
-  // ── Sheet 6: הכנסות רבעוניות ──────────────────────────────────────────────
-  const hdrs5q=["רבעון","כמות שסופקה","הכנסות (₪)"];
-  const qtr={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=qKey(d.date);if(!k)return;if(!qtr[k])qtr[k]={qty:0,rev:0};qtr[k].qty+=Number(d.qty||0);qtr[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0);}));
+  // ── Sheet 6: הכנסות רבעוניות ─────────────────────────────────────────
+  const h5q=["רבעון","כמות שסופקה","הכנסות (₪)"];
+  const qtr={};orders.forEach(o=>o.deliveries.forEach(d=>{const k=qKey(d.date);if(!k)return;if(!qtr[k])qtr[k]={qty:0,rev:0};qtr[k].qty+=Number(d.qty||0);qtr[k].rev+=Number(d.qty||0)*Number(o.unitPrice||0)}));
   const qtrRows=Object.keys(qtr).sort().map(k=>[k,qtr[k].qty,qtr[k].rev]);
-  const ws6=XLSX.utils.aoa_to_sheet(qtrRows.length?[hdrs5q,...qtrRows]:[hdrs5q,["אין נתונים",0,0]]);
-  applyHdrs(ws6,hdrs5q);
-  qtrRows.forEach((_,i)=>applyRow(ws6,i+1,3,i%2===0));
-  setColWidths(ws6,[14,16,18]);setRTL(ws6);freezeRow(ws6);
-  if(!ws6["!rows"])ws6["!rows"]=[];ws6["!rows"][0]={hpx:24};
-  XLSX.utils.book_append_sheet(wb,ws6,"הכנסות רבעוניות");
+  XLSX.utils.book_append_sheet(wb,makeSheet(h5q,qtrRows.length?qtrRows:[["אין נתונים",0,0]],[14,16,18],null),"הכנסות רבעוניות");
 
   XLSX.writeFile(wb,"דוח_ייצור_"+today+".xlsx");
 }
@@ -1053,7 +1069,7 @@ function YieldDashboard({orders,projects}){
     if(!data||!data.length||data.every(d=>d.yield===null))
       return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--c-dim)",fontSize:13}}>אין נתוני Yield לתקופה זו</div>;
     const valid=data.filter(d=>d.yield!==null);
-    const padL=36,padR=12,padT=20,padB=44,W=480,H=height+padT+padB;
+    const padL=36,padR=16,padT=52,padB=44,W=480,H=height+padT+padB;
     const slotW=(W-padL-padR)/data.length;
     const bw=Math.min(40,slotW*.55);
     const bx=i=>padL+i*slotW+slotW/2-bw/2;
@@ -1089,13 +1105,12 @@ function YieldDashboard({orders,projects}){
               <rect x={x} y={y} width={bw} height={Math.min(5,h)} rx={4} fill="rgba(255,255,255,.2)"/>
               {isH&&<g>
                 {(()=>{
-                  const tw=90,th=36;
-                  // clamp X so tooltip stays inside padL..W-padR
+                  const tw=96,th=36;
                   const tx=Math.min(Math.max(cx2-tw/2, padL), W-padR-tw);
-                  // show above bar if enough room, else below
-                  const ty=y-th-8>=padT ? y-th-8 : y+h+6;
+                  // Always show above the bar — padT is 52 so there's always room
+                  const ty=Math.max(padT+2, y-th-8);
                   return(<g>
-                    <rect x={tx} y={ty} width={tw} height={th} rx={5} fill={cv.tooltip} stroke={c} strokeWidth={1}/>
+                    <rect x={tx} y={ty} width={tw} height={th} rx={5} fill={cv.tooltip} stroke={c} strokeWidth={1.2}/>
                     <text x={tx+tw/2} y={ty+14} textAnchor="middle" fill={c} fontSize={12} fontWeight="700" fontFamily="sans-serif">{d.yield.toFixed(1)}%</text>
                     <text x={tx+tw/2} y={ty+27} textAnchor="middle" fill={cv.muted} fontSize={9} fontFamily="sans-serif">{d.defects} תקלות · {d.delivered.toLocaleString()} יח'</text>
                   </g>);
